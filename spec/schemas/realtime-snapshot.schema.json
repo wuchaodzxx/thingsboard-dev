@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "realtime-snapshot.schema.json",
+  "title": "M13 data：readRealtimeData 召测实时快照",
+  "type": "object",
+  "required": ["p", "dqf"],
+  "properties": {
+    "u": { "type": "number", "minimum": 0, "maximum": 100000 },
+    "i": { "type": "number", "minimum": 0, "maximum": 10000 },
+    "p": { "$ref": "_common.schema.json#/definitions/kw" },
+    "q": { "$ref": "_common.schema.json#/definitions/kw" },
+    "s": { "type": "number", "minimum": 0, "maximum": 150000 },
+    "pf": { "type": "number", "minimum": -1, "maximum": 1 },
+    "f": { "type": "number", "minimum": 45, "maximum": 65 },
+    "t_dev": { "type": "number", "minimum": -60, "maximum": 150 },
+    "t_amb": { "type": "number", "minimum": -60, "maximum": 150 },
+    "soc": { "type": "number", "minimum": 0, "maximum": 100 },
+    "runState": { "$ref": "_common.schema.json#/definitions/runState" },
+    "dqf": { "$ref": "_common.schema.json#/definitions/dqf" },
+    "dc_u": { "type": "number", "minimum": 0, "maximum": 1500 },
+    "dc_i": { "type": "number", "minimum": 0, "maximum": 2000 },
+    "dc_p": { "type": "number", "minimum": 0, "maximum": 120000 },
+    "irradi": { "type": "number", "minimum": 0, "maximum": 2000 },
+    "t_mod": { "type": "number", "minimum": -40, "maximum": 120 }
+  },
+  "additionalProperties": false
+}

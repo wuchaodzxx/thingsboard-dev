@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "telemetry-heartbeat.schema.json",
+  "title": "M02 业务心跳",
+  "type": "object",
+  "required": ["ts", "values"],
+  "properties": {
+    "ts": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "values": {
+      "type": "object",
+      "required": ["msgType", "hbSeq", "runState", "ctrlMode"],
+      "properties": {
+        "msgType": { "type": "string", "const": "hb" },
+        "hbSeq": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "runState": { "$ref": "_common.schema.json#/definitions/runState" },
+        "ctrlMode": { "$ref": "_common.schema.json#/definitions/ctrlMode" },
+        "uptimeSec": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

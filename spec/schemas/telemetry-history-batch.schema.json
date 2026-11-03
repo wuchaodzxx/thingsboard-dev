@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "telemetry-history-batch.schema.json",
+  "title": "M06 历史数据批量补传（TB原生遥测数组）",
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 100,
+  "items": {
+    "type": "object",
+    "required": ["ts", "values"],
+    "properties": {
+      "ts": { "$ref": "_common.schema.json#/definitions/tsMs" },
+      "values": {
+        "oneOf": [
+          { "$ref": "telemetry-1min.schema.json#/properties/values" },
+          { "$ref": "telemetry-15min.schema.json#/properties/values" }
+        ]
+      }
+    },
+    "additionalProperties": false
+  }
+}

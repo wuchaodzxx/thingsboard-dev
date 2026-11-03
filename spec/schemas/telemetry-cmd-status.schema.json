@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "telemetry-cmd-status.schema.json",
+  "title": "M14 指令状态/终态上报",
+  "type": "object",
+  "required": ["ts", "values"],
+  "properties": {
+    "ts": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "values": {
+      "type": "object",
+      "required": ["msgType", "cmdId", "cmdType", "cmdState", "errCode"],
+      "properties": {
+        "msgType": { "type": "string", "const": "cmdStatus" },
+        "cmdId": { "$ref": "_common.schema.json#/definitions/cmdId" },
+        "cmdType": {
+          "type": "string",
+          "enum": ["readRealtimeData", "readHistoryData", "getDeviceParams", "setDeviceParams",
+            "setActivePowerTarget", "setMaxPowerLimit", "setRunMode", "setChargeDischargePower"]
+        },
+        "cmdState": { "$ref": "_common.schema.json#/definitions/cmdTerminalState" },
+        "errCode": { "$ref": "_common.schema.json#/definitions/errCode" },
+        "errMsg": { "type": "string", "maxLength": 128 },
+        "execTs": { "$ref": "_common.schema.json#/definitions/tsMs" },
+        "costMs": { "type": "integer", "minimum": 0 },
+        "dup": { "type": "boolean" },
+        "actualP": { "$ref": "_common.schema.json#/definitions/kw" },
+        "actualPLimit": { "$ref": "_common.schema.json#/definitions/kw" },
+        "soc": { "type": "number", "minimum": 0, "maximum": 100 },
+        "runState": { "$ref": "_common.schema.json#/definitions/runState" },
+        "applied": { "type": "object", "description": "setDeviceParams 实际应用的键值" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

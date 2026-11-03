@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "telemetry-alarm.schema.json",
+  "title": "M11 告警/异常上报",
+  "type": "object",
+  "required": ["ts", "values"],
+  "properties": {
+    "ts": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "values": {
+      "type": "object",
+      "required": ["msgType", "alarmId", "alarmCode", "alarmLevel", "alarmTs", "alarmActive"],
+      "properties": {
+        "msgType": { "type": "string", "const": "alarm" },
+        "alarmId": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]+$" },
+        "alarmCode": { "$ref": "_common.schema.json#/definitions/alarmCode" },
+        "alarmLevel": { "$ref": "_common.schema.json#/definitions/alarmLevel" },
+        "alarmTs": { "$ref": "_common.schema.json#/definitions/tsMs" },
+        "alarmActive": { "type": "boolean", "description": "true产生 false恢复" },
+        "alarmDesc": { "type": "string", "maxLength": 128 },
+        "refKey": { "type": "string", "maxLength": 32 },
+        "refValue": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

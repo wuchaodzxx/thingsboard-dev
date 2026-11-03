@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "attributes-constraints.schema.json",
+  "title": "M07 调节能力与运行约束（客户端属性）",
+  "type": "object",
+  "required": ["pMin", "pMax", "rampRate", "respTimeS", "ctrlMode", "regMode"],
+  "properties": {
+    "pMin": { "$ref": "_common.schema.json#/definitions/kw" },
+    "pMax": { "$ref": "_common.schema.json#/definitions/kw" },
+    "rampRate": { "type": "number", "exclusiveMinimum": 0, "maximum": 100000 },
+    "qMin": { "type": "number", "minimum": -100000 },
+    "qMax": { "type": "number", "maximum": 100000 },
+    "socMin": { "type": "number", "minimum": 0, "maximum": 100 },
+    "socMax": { "type": "number", "minimum": 0, "maximum": 100 },
+    "chgPMax": { "type": "number", "minimum": 0 },
+    "disPMax": { "type": "number", "minimum": 0 },
+    "respTimeS": { "type": "integer", "minimum": 1, "maximum": 300 },
+    "ctrlMode": { "$ref": "_common.schema.json#/definitions/ctrlMode" },
+    "regMode": { "type": "string", "enum": ["auto", "manual"] },
+    "upTimeS": { "type": "integer", "minimum": -1, "description": "-1=不限" },
+    "cacheCount": { "type": "integer", "minimum": 0 },
+    "cacheFromTs": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "cacheToTs": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "meterResetTs": { "$ref": "_common.schema.json#/definitions/tsMs" }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "rpc-response.schema.json",
+  "title": "M13 指令即时响应（发布至 v1/devices/me/rpc/response/{reqId}，reqId原样回填）",
+  "type": "object",
+  "required": ["cmdId", "state", "errCode", "ts"],
+  "properties": {
+    "cmdId": { "$ref": "_common.schema.json#/definitions/cmdId" },
+    "state": { "$ref": "_common.schema.json#/definitions/rpcState" },
+    "errCode": { "$ref": "_common.schema.json#/definitions/errCode" },
+    "errMsg": { "type": "string", "maxLength": 128 },
+    "data": {
+      "type": "object",
+      "description": "查询类SUCCESS时必填：readRealtimeData→realtime-snapshot；readHistoryData→{callId,plannedBatches,records}；getDeviceParams→参数键值"
+    },
+    "dup": { "type": "boolean", "description": "幂等命中=true" },
+    "ts": { "$ref": "_common.schema.json#/definitions/tsMs" }
+  },
+  "additionalProperties": false
+}

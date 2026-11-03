@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "telemetry-15min.schema.json",
+  "title": "M04 15分钟周期遥测（含电量表码与区间增量）",
+  "type": "object",
+  "required": ["ts", "values"],
+  "properties": {
+    "ts": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "values": {
+      "type": "object",
+      "required": ["p", "dqf", "e_imp", "e_exp"],
+      "properties": {
+        "u": { "type": "number", "minimum": 0, "maximum": 100000 },
+        "i": { "type": "number", "minimum": 0, "maximum": 10000 },
+        "p": { "$ref": "_common.schema.json#/definitions/kw" },
+        "pf": { "type": "number", "minimum": -1, "maximum": 1 },
+        "f": { "type": "number", "minimum": 45, "maximum": 65 },
+        "runState": { "$ref": "_common.schema.json#/definitions/runState" },
+        "dqf": { "$ref": "_common.schema.json#/definitions/dqf" },
+        "e_imp": { "$ref": "_common.schema.json#/definitions/kwhCum" },
+        "e_exp": { "$ref": "_common.schema.json#/definitions/kwhCum" },
+        "e_imp_15": { "$ref": "_common.schema.json#/definitions/kwhDelta" },
+        "e_exp_15": { "$ref": "_common.schema.json#/definitions/kwhDelta" },
+        "e_day": { "type": "number", "minimum": 0, "maximum": 999999.999 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

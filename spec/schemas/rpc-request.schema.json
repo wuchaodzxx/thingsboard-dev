@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "rpc-request.schema.json",
+  "title": "M12 控制指令下发信封（RPC method=cmdType，本对象为RPC params）",
+  "type": "object",
+  "required": ["cmdId", "issuedAt", "expireAt", "params"],
+  "properties": {
+    "cmdId": { "$ref": "_common.schema.json#/definitions/cmdId" },
+    "issuedAt": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "expireAt": { "$ref": "_common.schema.json#/definitions/tsMs" },
+    "params": {
+      "type": "object",
+      "description": "各cmdType的params，见规范5.2；校验在设备侧按cmdType进行",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "_common.schema.json",
+  "title": "VPP-IoT vpp-1.0 公共定义",
+  "definitions": {
+    "tsMs": { "type": "integer", "minimum": 0, "description": "UTC 毫秒时间戳（13位）" },
+    "errCode": { "type": "integer", "minimum": 0, "maximum": 9999 },
+    "cmdId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]+$" },
+    "rpcState": { "type": "string", "enum": ["ACK", "EXECUTING", "SUCCESS", "FAILED", "REJECTED"] },
+    "cmdTerminalState": { "type": "string", "enum": ["EXECUTING", "SUCCESS", "FAILED"] },
+    "dqf": { "type": "integer", "enum": [0, 1, 2, 3], "description": "数据质量标识 0有效 1可疑 2无效 3补录" },
+    "runState": { "type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8] },
+    "ctrlMode": { "type": "integer", "enum": [0, 1], "description": "0本地 1远程" },
+    "devType": { "type": "string", "enum": ["pv", "pcs", "flex"] },
+    "alarmLevel": { "type": "integer", "enum": [1, 2, 3, 4] },
+    "alarmCode": { "type": "integer", "minimum": 1000, "maximum": 9999 },
+    "kw": { "type": "number", "minimum": -100000, "maximum": 100000 },
+    "kwhCum": { "type": "number", "minimum": 0, "maximum": 99999999.999, "description": "累计表码 kWh，回绕上限 99999999.999" },
+    "kwhDelta": { "type": "number", "minimum": 0, "maximum": 99999.999 },
+    "nonEmptyStr": { "type": "string", "minLength": 1, "maxLength": 128 }
+  }
+}
