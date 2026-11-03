@@ -1,0 +1,131 @@
+{
+ "ts": 1793704687838,
+ "results": [
+  {
+   "id": "P4-01",
+   "name": "健康检查",
+   "result": "PASS",
+   "detail": "mqtt={'host': 'localhost', 'port': 18885}",
+   "elapsedMs": 3
+  },
+  {
+   "id": "P4-02",
+   "name": "设备创建+证书签发+TB注册(X509)",
+   "result": "PASS",
+   "detail": "created pv-1001+pcs-1001, TB credentialsType=X509_CERTIFICATE",
+   "elapsedMs": 1141
+  },
+  {
+   "id": "P4-03",
+   "name": "双向TLS上线",
+   "result": "PASS",
+   "detail": "pv-1001/pcs-1001 connected, hbSeq=1",
+   "elapsedMs": 1015
+  },
+  {
+   "id": "P4-04",
+   "name": "1min遥测入库(整分对齐/dqf/派生量)",
+   "result": "PASS",
+   "detail": "2 条/4min, ts 整分对齐, latest p=0.0, s=0.0",
+   "elapsedMs": 10088
+  },
+  {
+   "id": "P4-05",
+   "name": "PCS SOC 测点入库",
+   "result": "PASS",
+   "detail": "soc=60.0",
+   "elapsedMs": 11
+  },
+  {
+   "id": "P4-06",
+   "name": "共享属性下发+cfgVerApplied回执+心跳周期生效",
+   "result": "PASS",
+   "detail": "cfgVerApplied=1 cfgResult=0 hbPeriod→20s",
+   "elapsedMs": 1056
+  },
+  {
+   "id": "P4-07",
+   "name": "cfgVer 重复版本拒绝(1002)",
+   "result": "PASS",
+   "detail": "cfgResult=1002",
+   "elapsedMs": 1041
+  },
+  {
+   "id": "P4-08",
+   "name": "召测 readRealtimeData→M13 SUCCESS→M05",
+   "result": "PASS",
+   "detail": "SUCCESS p=0.0, M05 已入库",
+   "elapsedMs": 810
+  },
+  {
+   "id": "P4-09",
+   "name": "控制 setActivePowerTarget→ACK→cmdStatus SUCCESS→实际功率核验",
+   "result": "PASS",
+   "detail": "ACK→SUCCESS actualP=79.5, 平台 p≈80.0",
+   "elapsedMs": 114735
+  },
+  {
+   "id": "P4-10",
+   "name": "指令幂等(重发 dup=true)",
+   "result": "PASS",
+   "detail": "首答 SUCCESS, 重发 dup=true state=SUCCESS",
+   "elapsedMs": 1771
+  },
+  {
+   "id": "P4-11",
+   "name": "过期指令 REJECTED 2004",
+   "result": "PASS",
+   "detail": "REJECTED errCode=2004 (2004 过期)",
+   "elapsedMs": 1023
+  },
+  {
+   "id": "P4-12",
+   "name": "PCS setChargeDischargePower 闭环",
+   "result": "PASS",
+   "detail": "SUCCESS actualP=-49.86, 平台 p=-50.0, soc=58.69",
+   "elapsedMs": 177502
+  },
+  {
+   "id": "P4-13",
+   "name": "断线注入→缓存→重连补传→平台核验",
+   "result": "PASS",
+   "detail": "cached=5 replayBatches=batches=1, 平台 200s 窗口 4 条",
+   "elapsedMs": 141236
+  },
+  {
+   "id": "P4-14",
+   "name": "历史数据召测 readHistoryData→M06 批量入库",
+   "result": "PASS",
+   "detail": "meta={'callId': 'call-1793704404', 'plannedBatches': 1, 'records': 9}, 平台 e_exp_15 9 点 ≥ records 9",
+   "elapsedMs": 1429
+  },
+  {
+   "id": "P4-15",
+   "name": "异常注入(缺字段/越界/坏报文/拒令)",
+   "result": "FAIL",
+   "error": "轮询超时(150s) 平台 p=99999(越界注入): last=[] | 线程: sim-pv-1001 <- time.sleep(0.5); sim-pcs-1001 <- time.sleep(0.5)",
+   "elapsedMs": 191082
+  },
+  {
+   "id": "P4-16",
+   "name": "指令执行失败闭环 FAILED",
+   "result": "FAIL",
+   "error": "轮询超时(90s) s10 断链后 TB active 恢复: last=None | 线程: sim-pv-1001 <- time.sleep(0.5); sim-pcs-1001 <- time.sleep(0.5)",
+   "elapsedMs": 90599
+  },
+  {
+   "id": "P4-17",
+   "name": "日志倒序/导出",
+   "result": "PASS",
+   "detail": "倒序 50 条, CSV 100082B",
+   "elapsedMs": 16
+  },
+  {
+   "id": "P4-18",
+   "name": "证书REST",
+   "result": "PASS",
+   "detail": "certs=8 项, verify: /Users/wuchao/本地工作/thingsboard-dev/certm",
+   "elapsedMs": 45
+  }
+ ]
+}

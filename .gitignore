@@ -1,0 +1,9 @@
+# 密钥、证书与本机配置不入代码仓库
+.venv/
+__pycache__/
+*.pyc
+certmgr/secrets/
+deploy/certs/
+deploy/.env
+test-output/
+*.log

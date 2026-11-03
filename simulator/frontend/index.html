@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VPP 设备模拟器</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/index.css">
+<script src="https://cdn.jsdelivr.net/npm/vue@3.4.38/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/index.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/locale/zh-cn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
+<style>
+  body { margin: 0; background: #f5f7fa; font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .page { padding: 16px 20px 24px; }
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+  .fault-tag { margin: 2px 4px 2px 0; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+  .pre { background: #f6f8fa; padding: 10px; border-radius: 6px; max-height: 340px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .title { font-size: 15px; font-weight: 600; margin: 0 0 12px; color: #303133; }
+  .sub { color: #909399; font-size: 12px; }
+  .mt8 { margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <el-container>
+    <el-header height="56px" style="background:#1f2d3d;color:#fff;display:flex;align-items:center;gap:16px;">
+      <span style="font-size:17px;font-weight:600;">VPP 设备模拟器</span>
+      <span class="sub" style="color:#8a97a8;">X.509 双向 TLS · MQTT 18885 · 报文规范 vpp-1.0</span>
+      <span style="flex:1"></span>
+      <el-tag :type="health.status==='ok' ? 'success' : 'danger'" effect="dark" size="small">
+        后端 {{ health.status || '...' }} · 设备 {{ health.devices ?? '-' }}
+      </el-tag>
+    </el-header>
+    <el-main style="padding:0;">
+      <el-tabs v-model="tab" style="background:#fff;">
+        <el-tab-pane label="设备管理" name="devices"></el-tab-pane>
+        <el-tab-pane label="异常注入" name="faults"></el-tab-pane>
+        <el-tab-pane label="证书管理" name="certs"></el-tab-pane>
+        <el-tab-pane label="报文日志" name="logs"></el-tab-pane>
+      </el-tabs>
+
+      <!-- ============ 设备管理 ============ -->
+      <div class="page" v-show="tab==='devices'">
+        <div class="toolbar">
+          <el-button :icon="RefreshCw" @click="loadDevices()">刷新</el-button>
+          <el-switch v-model="autoDevices" active-text="自动刷新(2s)"></el-switch>
+          <span class="spacer"></span>
+          <el-button type="primary" :icon="Plus" @click="openCreate()">新建设备</el-button>
+        </div>
+        <el-table :data="devices" border size="small" :row-key="r=>r.name">
+          <el-table-column prop="name" label="设备名" min-width="110"></el-table-column>
+          <el-table-column label="类型" width="90">
+            <template #default="{row}"><el-tag size="small" :type="row.devType==='pv'?'success':(row.devType==='pcs'?'primary':'warning')">{{ row.devType }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="capKw" label="容量kW" width="80" align="right"></el-table-column>
+          <el-table-column label="连接" width="90">
+            <template #default="{row}">
+              <el-tag size="small" :type="row.connected?'success':'danger'" effect="plain">{{ row.connected?'在线':'离线' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="运行态" width="100">
+            <template #default="{row}"><el-tag size="small" effect="plain" :type="runStateType(row.runState)">{{ runStateLabel(row.runState) }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="功率kW" width="90" align="right">
+            <template #default="{row}"><span class="mono">{{ fmtNum(row.curP) }}</span></template>
+          </el-table-column>
+          <el-table-column label="SOC%" width="75" align="right">
+            <template #default="{row}"><span class="mono">{{ row.soc==null?'-':row.soc }}</span></template>
+          </el-table-column>
+          <el-table-column label="心跳" width="110" align="right">
+            <template #default="{row}"><span class="mono">#{{ row.hbSeq }} / {{ row.hbPeriodSec }}s</span></template>
+          </el-table-column>
+          <el-table-column label="缓存" width="80" align="right">
+            <template #default="{row}">
+              <span :class="row.cacheCount>0?'mono':''" :style="row.cacheCount>0?'color:#e6a23c;font-weight:600':''">{{ row.cacheCount }}</span>
+              <span v-if="row.replaying" class="sub"> 补传中</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="sentCount" label="已发" width="70" align="right"></el-table-column>
+          <el-table-column label="cfgVer" width="70" align="right">
+            <template #default="{row}"><span class="mono">{{ row.cfgVer }}</span></template>
+          </el-table-column>
+          <el-table-column label="故障" min-width="180">
+            <template #default="{row}">
+              <el-tag v-for="(v,k) in row.fault" :key="k" class="fault-tag" size="small" type="danger" effect="plain">{{ faultLabel(k,v) }}</el-tag>
+              <span v-if="!row.fault || !Object.keys(row.fault).length" class="sub">无</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="270" fixed="right">
+            <template #default="{row}">
+              <el-button v-if="!row.connected" size="small" type="success" @click="devAction(row.name,'connect')">连接</el-button>
+              <el-button v-else size="small" type="warning" plain @click="devAction(row.name,'disconnect')">断开</el-button>
+              <el-button size="small" @click="openCurve(row)">调参</el-button>
+              <el-button size="small" @click="openLedger(row)">台账</el-button>
+              <el-popconfirm title="删除设备？（TB 侧设备保留）" @confirm="delDevice(row.name)">
+                <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="sub mt8">离线期间遥测写入本地缓存（上限 1536 条 ≈ 24h），重连后按时间升序自动补传（M06）。</div>
+      </div>
+
+      <!-- ============ 异常注入 ============ -->
+      <div class="page" v-show="tab==='faults'">
+        <div class="toolbar">
+          <span>目标设备：</span>
+          <el-select v-model="fDevice" style="width:180px" placeholder="选择设备">
+            <el-option v-for="d in devices" :key="d.name" :label="d.name" :value="d.name"></el-option>
+          </el-select>
+          <el-button :icon="RefreshCw" @click="loadDevices()">刷新</el-button>
+          <span class="spacer"></span>
+          <span>当前故障：</span>
+          <template v-if="curDev">
+            <el-tag v-for="(v,k) in curDev.fault" :key="k" class="fault-tag" size="small" type="danger">{{ faultLabel(k,v) }}</el-tag>
+            <span v-if="!curDev.fault || !Object.keys(curDev.fault).length" class="sub">无</span>
+          </template>
+          <span v-else class="sub">未选择</span>
+        </div>
+        <div class="card-grid">
+          <el-card v-for="m in faultModes" :key="m.mode" shadow="hover">
+            <template #header><b>{{ m.title }}</b> <span class="sub">{{ m.desc }}</span></template>
+            <el-form label-width="110px" size="small">
+              <el-form-item v-if="m.has.duration" label="持续时长(s)"><el-input-number v-model="m.f.durationSec" :min="1" :max="86400"></el-input-number></el-form-item>
+              <el-form-item v-if="m.has.ms" label="延迟(ms)"><el-input-number v-model="m.f.ms" :min="50" :max="10000" :step="100"></el-input-number></el-form-item>
+              <el-form-item v-if="m.has.count" label="次数"><el-input-number v-model="m.f.count" :min="1" :max="1000"></el-input-number></el-form-item>
+              <el-form-item v-if="m.has.field" label="缺失字段"><el-input v-model="m.f.field" class="mono" style="width:140px"></el-input></el-form-item>
+              <el-form-item v-if="m.has.key" label="越界字段"><el-input v-model="m.f.key" class="mono" style="width:140px"></el-input></el-form-item>
+              <el-form-item v-if="m.has.value" label="越界值"><el-input-number v-model="m.f.value" :min="-1e6" :max="1e6"></el-input-number></el-form-item>
+              <el-button type="danger" plain @click="inject(m)">注入</el-button>
+            </el-form>
+          </el-card>
+        </div>
+        <div class="sub mt8">disconnect / delay 按时长生效；其余按次数生效（消耗完自动解除）。rejectCmd/failCmd 影响下发的 RPC 指令（M13 REJECTED / FAILED）。</div>
+      </div>
+
+      <!-- ============ 证书管理 ============ -->
+      <div class="page" v-show="tab==='certs'">
+        <div class="toolbar">
+          <el-button :icon="RefreshCw" @click="loadCerts()">刷新</el-button>
+          <el-button type="primary" plain :icon="Plus" @click="dlgIssue=true; issueForm={name:'',days:365}">签发设备证书</el-button>
+          <el-button type="primary" plain @click="dlgCsr=true; csrForm={name:'',csrPem:'',days:365}">签发外部 CSR</el-button>
+          <span style="display:flex;align-items:center;gap:6px;">
+            到期预警(天) <el-input-number v-model="expiryDays" :min="1" :max="3650" size="small" style="width:120px"></el-input-number>
+            <el-button size="small" @click="checkExpiry">检查</el-button>
+          </span>
+        </div>
+        <el-alert v-if="expiring.length" type="warning" :closable="false" style="margin-bottom:12px"
+                  :title="'以下证书将在 ' + expiryDays + ' 天内到期：' + expiring.map(c=>c.name).join(', ')"></el-alert>
+        <el-table :data="certs" border size="small">
+          <el-table-column prop="name" label="名称" min-width="120"></el-table-column>
+          <el-table-column prop="cn" label="CN" min-width="120"></el-table-column>
+          <el-table-column label="类型" width="90">
+            <template #default="{row}"><el-tag size="small" :type="row.kind==='device'?'success':'info'">{{ row.kind }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="serial" label="序列号" width="120">
+            <template #default="{row}"><span class="mono">{{ (row.serial||'').slice(-12) }}</span></template>
+          </el-table-column>
+          <el-table-column prop="notBefore" label="生效" width="160">
+            <template #default="{row}"><span class="mono">{{ row.notBefore }}</span></template>
+          </el-table-column>
+          <el-table-column prop="notAfter" label="到期" width="160">
+            <template #default="{row}"><span class="mono">{{ row.notAfter }}</span></template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{row}">
+              <el-tag v-if="row.revokedAt" size="small" type="danger">已撤销</el-tag>
+              <el-tag v-else size="small" type="success" effect="plain">有效</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="280" fixed="right">
+            <template #default="{row}">
+              <el-button size="small" @click="openCert(row.name)">详情</el-button>
+              <el-button size="small" @click="verifyCert(row.name)">校验链</el-button>
+              <el-button size="small" type="primary" plain @click="tbRegister(row.name)">TB 注册</el-button>
+              <el-popconfirm title="撤销证书并重置 TB 凭据？" @confirm="revokeCert(row.name)">
+                <template #reference><el-button size="small" type="danger" plain>撤销</el-button></template>
+              </el-popconfirm>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="sub mt8">CA 私钥不经 API 暴露；撤销后 TB CE 3.5.1 不消费 CRL，平台侧通过重置设备凭据使其失效。</div>
+      </div>
+
+      <!-- ============ 报文日志 ============ -->
+      <div class="page" v-show="tab==='logs'">
+        <div class="toolbar">
+          <el-select v-model="logFilter.device" clearable placeholder="设备" style="width:150px" size="small">
+            <el-option v-for="d in devices" :key="d.name" :label="d.name" :value="d.name"></el-option>
+          </el-select>
+          <el-select v-model="logFilter.direction" clearable placeholder="方向" style="width:110px" size="small">
+            <el-option label="发出 out" value="out"></el-option>
+            <el-option label="收到 in" value="in"></el-option>
+            <el-option label="事件 evt" value="evt"></el-option>
+          </el-select>
+          <el-select v-model="logFilter.msgType" clearable placeholder="报文类型" style="width:120px" size="small">
+            <el-option v-for="t in msgTypes" :key="t" :label="t" :value="t"></el-option>
+          </el-select>
+          <el-input v-model="logFilter.q" clearable placeholder="关键字过滤" style="width:180px" size="small" @keyup.enter="loadLogs()"></el-input>
+          <el-input-number v-model="logFilter.limit" :min="20" :max="2000" :step="20" size="small" style="width:110px"></el-input-number>
+          <el-button size="small" type="primary" :icon="Search" @click="loadLogs()">查询</el-button>
+          <el-switch v-model="autoLogs" active-text="自动刷新(2s)"></el-switch>
+          <span class="spacer"></span>
+          <el-button size="small" @click="exportLogs('json')">导出 JSON</el-button>
+          <el-button size="small" @click="exportLogs('csv')">导出 CSV</el-button>
+        </div>
+        <el-table :data="logs" border size="small" :row-key="r=>r.seq" :default-sort="{prop:'seq',order:'descending'}">
+          <el-table-column type="expand">
+            <template #default="{row}">
+              <pre class="pre">{{ pretty(row.payload) }}</pre>
+            </template>
+          </el-table-column>
+          <el-table-column label="时间" width="100">
+            <template #default="{row}"><span class="mono">{{ fmtTs(row.ts) }}</span></template>
+          </el-table-column>
+          <el-table-column prop="deviceId" label="设备" width="100"></el-table-column>
+          <el-table-column label="方向" width="70">
+            <template #default="{row}"><el-tag size="small" effect="plain" :type="row.direction==='out'?'success':(row.direction==='in'?'primary':'info')">{{ row.direction }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="msgType" label="类型" width="80">
+            <template #default="{row}"><span class="mono">{{ row.msgType || '-' }}</span></template>
+          </el-table-column>
+          <el-table-column prop="cmdId" label="cmdId" width="140">
+            <template #default="{row}"><span class="mono">{{ row.cmdId || '-' }}</span></template>
+          </el-table-column>
+          <el-table-column label="结果" width="90">
+            <template #default="{row}"><el-tag size="small" :type="row.result==='ok'?'success':(row.result==='cached'?'warning':'danger')" effect="plain">{{ row.result }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="latencyMs" label="耗时ms" width="75" align="right">
+            <template #default="{row}"><span class="mono">{{ row.latencyMs==null?'-':row.latencyMs }}</span></template>
+          </el-table-column>
+          <el-table-column prop="error" label="备注/错误" min-width="220">
+            <template #default="{row}"><span class="sub">{{ row.error || '' }}</span></template>
+          </el-table-column>
+        </el-table>
+        <div class="sub mt8">日志环形缓冲 20000 条，敏感字段（token/私钥/凭据）自动脱敏为 ***REDACTED***。</div>
+      </div>
+    </el-main>
+  </el-container>
+
+  <!-- 新建设备 -->
+  <el-dialog v-model="dlgCreate" title="新建设备" width="440px">
+    <el-form label-width="110px">
+      <el-form-item label="设备名"><el-input v-model="createForm.name" placeholder="如 pv-2001"></el-input></el-form-item>
+      <el-form-item label="设备类型">
+        <el-radio-group v-model="createForm.devType">
+          <el-radio-button value="pv">光伏 pv</el-radio-button>
+          <el-radio-button value="pcs">储能 pcs</el-radio-button>
+          <el-radio-button value="flex">柔性 flex</el-radio-button>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item label="容量(kW)"><el-input-number v-model="createForm.capKw" :min="1" :max="10000"></el-input-number></el-form-item>
+      <el-form-item label="自动注册"><el-switch v-model="createForm.autoRegister"></el-switch><span class="sub ml8">签发证书并注册到 ThingsBoard（X.509）</span></el-form-item>
+      <el-form-item label="自动连接"><el-switch v-model="createForm.autoConnect"></el-switch></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgCreate=false">取消</el-button>
+      <el-button type="primary" @click="createDevice()">创建</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- curve 调参 -->
+  <el-dialog v-model="dlgCurve" :title="'运行参数调整 - ' + (curveForm.name||'')" width="460px">
+    <el-form label-width="130px">
+      <el-form-item label="容量 capKw"><el-input-number v-model="curveForm.capKw" :min="1" :max="10000"></el-input-number></el-form-item>
+      <el-form-item label="爬坡速率kW/min"><el-input-number v-model="curveForm.rampRate" :min="1" :max="6000"></el-input-number></el-form-item>
+      <template v-if="curveForm.devType==='pcs'">
+        <el-form-item label="SOC下限%"><el-input-number v-model="curveForm.socMin" :min="0" :max="100"></el-input-number></el-form-item>
+        <el-form-item label="SOC上限%"><el-input-number v-model="curveForm.socMax" :min="0" :max="100"></el-input-number></el-form-item>
+        <el-form-item label="最大充电kW"><el-input-number v-model="curveForm.chgPMax" :min="1" :max="10000"></el-input-number></el-form-item>
+        <el-form-item label="最大放电kW"><el-input-number v-model="curveForm.disPMax" :min="1" :max="10000"></el-input-number></el-form-item>
+      </template>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgCurve=false">取消</el-button>
+      <el-button type="primary" @click="saveCurve()">保存</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 指令台账 -->
+  <el-drawer v-model="dlgLedger" :title="'指令台账 - ' + (ledgerName||'')" size="55%">
+    <el-button size="small" :icon="RefreshCw" @click="loadLedger()" style="margin-bottom:10px">刷新</el-button>
+    <el-table :data="ledger" border size="small">
+      <el-table-column type="expand"><template #default="{row}"><pre class="pre">{{ pretty(row.data || row.err) }}</pre></template></el-table-column>
+      <el-table-column label="时间" width="100"><template #default="{row}"><span class="mono">{{ fmtTs(row.ts) }}</span></template></el-table-column>
+      <el-table-column prop="cmdId" label="cmdId" min-width="130"><template #default="{row}"><span class="mono">{{ row.cmdId }}</span></template></el-table-column>
+      <el-table-column prop="cmdType" label="指令" min-width="150"></el-table-column>
+      <el-table-column label="终态" width="100">
+        <template #default="{row}"><el-tag size="small" :type="row.state==='SUCCESS'?'success':(row.state==='ACK'?'primary':'danger')" effect="plain">{{ row.state }}</el-tag></template>
+      </el-table-column>
+      <el-table-column prop="errCode" label="errCode" width="80" align="right"></el-table-column>
+    </el-table>
+  </el-drawer>
+
+  <!-- 签发设备证书 -->
+  <el-dialog v-model="dlgIssue" title="签发设备证书" width="420px">
+    <el-form label-width="90px">
+      <el-form-item label="名称"><el-input v-model="issueForm.name" placeholder="设备名/CN"></el-input></el-form-item>
+      <el-form-item label="有效天数"><el-input-number v-model="issueForm.days" :min="1" :max="3650"></el-input-number></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgIssue=false">取消</el-button>
+      <el-button type="primary" @click="issueCert()">签发</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 签发外部 CSR -->
+  <el-dialog v-model="dlgCsr" title="签发外部 CSR（私钥不出厂家环境）" width="560px">
+    <el-form label-width="90px">
+      <el-form-item label="名称"><el-input v-model="csrForm.name"></el-input></el-form-item>
+      <el-form-item label="有效天数"><el-input-number v-model="csrForm.days" :min="1" :max="3650"></el-input-number></el-form-item>
+      <el-form-item label="CSR(PEM)"><el-input v-model="csrForm.csrPem" type="textarea" :rows="7" placeholder="-----BEGIN CERTIFICATE REQUEST-----"></el-input></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgCsr=false">取消</el-button>
+      <el-button type="primary" @click="signCsr()">签发</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 证书详情 -->
+  <el-drawer v-model="dlgCert" :title="'证书详情 - ' + (certDetail.name||'')" size="46%">
+    <el-descriptions :column="1" border size="small">
+      <el-descriptions-item label="CN">{{ certDetail.cn }}</el-descriptions-item>
+      <el-descriptions-item label="类型">{{ certDetail.kind }}</el-descriptions-item>
+      <el-descriptions-item label="序列号"><span class="mono">{{ certDetail.serial }}</span></el-descriptions-item>
+      <el-descriptions-item label="有效期"><span class="mono">{{ certDetail.notBefore }} ~ {{ certDetail.notAfter }}</span></el-descriptions-item>
+      <el-descriptions-item label="撤销时间"><span class="mono">{{ certDetail.revokedAt || '-' }}</span></el-descriptions-item>
+    </el-descriptions>
+    <h4 class="title mt8">证书 PEM</h4>
+    <pre class="pre">{{ certDetail.certPem }}</pre>
+  </el-drawer>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, watch } = Vue;
+
+const app = createApp({
+  setup() {
+    // ---------- 基础 ----------
+    const tab = ref('devices');
+    const health = ref({});
+    const msg = (t, m) => ElementPlus.ElMessage({ type: t, message: m, duration: 3000 });
+
+    async function api(method, path, body) {
+      const opt = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body !== undefined) opt.body = JSON.stringify(body);
+      const r = await fetch(path, opt);
+      let data = null;
+      try { data = await r.json(); } catch { /* 空响应 */ }
+      if (!r.ok) throw new Error((data && data.detail) ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : r.status + ' ' + r.statusText);
+      return data;
+    }
+    const run = async (fn, okMsg) => {
+      try { const r = await fn(); if (okMsg) msg('success', okMsg); return r; }
+      catch (e) { msg('error', String(e.message || e)); }
+    };
+
+    // ---------- 设备 ----------
+    const devices = ref([]);
+    const autoDevices = ref(true);
+    const runStateMap = { 1: '待机', 2: '发电中', 3: '充电中', 4: '放电中', 5: '停机', 8: '执行指令' };
+    const runStateLabel = s => runStateMap[s] || ('state ' + s);
+    const runStateType = s => ({ 2: 'success', 4: 'success', 3: 'warning', 5: 'info', 8: 'warning' }[s] || 'info');
+    const faultNames = { disconnect: '断线', delayMs: '延迟', dup: '重发', badJson: '坏报文', missing: '缺字段', oor: '越界', reject: '拒指令', fail: '败指令' };
+    const faultLabel = (k, v) => faultNames[k] + ' ' + (k === 'delayMs' ? v + 'ms' : (k === 'disconnect' ? v + 's' : '×' + v));
+    const fmtNum = n => (n == null ? '-' : Number(n).toFixed(1));
+    const fmtTs = ts => { const d = new Date(ts); const p = (n, l = 2) => String(n).padStart(l, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`; };
+    const pretty = o => { try { return JSON.stringify(o, null, 2) ?? '-'; } catch { return String(o); } };
+
+    async function loadDevices() {
+      try { devices.value = await api('GET', '/api/devices'); } catch { /* 忽略轮询错误 */ }
+    }
+    const devAction = (n, act) => run(() => api('POST', `/api/devices/${n}/${act}`), act === 'connect' ? '连接中…' : '已断开').then(loadDevices);
+    const delDevice = n => run(async () => { await api('DELETE', `/api/devices/${n}`); }, '已删除 ' + n).then(loadDevices);
+
+    const dlgCreate = ref(false);
+    const createForm = reactive({ name: '', devType: 'pv', capKw: 100, autoRegister: true, autoConnect: true });
+    const openCreate = () => { Object.assign(createForm, { name: '', devType: 'pv', capKw: 100, autoRegister: true, autoConnect: true }); dlgCreate.value = true; };
+    const createDevice = () => run(() => api('POST', '/api/devices', { ...createForm }), '设备已创建').then(r => { if (r) { dlgCreate.value = false; loadDevices(); } });
+
+    const dlgCurve = ref(false);
+    const curveForm = reactive({ name: '', devType: 'pv', capKw: 100, rampRate: 50, socMin: 10, socMax: 95, chgPMax: 100, disPMax: 100 });
+    const openCurve = row => {
+      Object.assign(curveForm, { name: row.name, devType: row.devType, capKw: row.capKw, rampRate: 50, socMin: 10, socMax: 95, chgPMax: 100, disPMax: 100 });
+      dlgCurve.value = true;
+      api('GET', '/api/devices/' + row.name).then(d => {
+        const c = d.cfg || {};
+        Object.assign(curveForm, { rampRate: c.rampRate, socMin: c.socMin, socMax: c.socMax, chgPMax: c.chgPMax, disPMax: c.disPMax, capKw: c.capKw });
+      }).catch(() => {});
+    };
+    const saveCurve = () => run(() => {
+      const body = { capKw: curveForm.capKw, rampRate: curveForm.rampRate };
+      if (curveForm.devType === 'pcs') Object.assign(body, { socMin: curveForm.socMin, socMax: curveForm.socMax, chgPMax: curveForm.chgPMax, disPMax: curveForm.disPMax });
+      return api('POST', `/api/devices/${curveForm.name}/curve`, body);
+    }, '参数已生效（立即下发 M07 约束）').then(r => { if (r) dlgCurve.value = false; });
+
+    // 指令台账
+    const dlgLedger = ref(false);
+    const ledgerName = ref('');
+    const ledger = ref([]);
+    const openLedger = row => { ledgerName.value = row.name; dlgLedger.value = true; loadLedger(); };
+    const loadLedger = () => run(() => api('GET', `/api/devices/${ledgerName.value}/ledger`)).then(r => { if (r) ledger.value = r; });
+
+    // ---------- 异常注入 ----------
+    const fDevice = ref('');
+    const curDev = computed(() => devices.value.find(d => d.name === fDevice.value));
+    const mk = o => reactive(Object.assign({ durationSec: 30, count: 1, ms: 300, key: 'p', value: 99999, field: 'p' }, o));
+    const faultModes = reactive([
+      { mode: 'disconnect', title: '链路断开', desc: '模拟网络中断，期间遥测进缓存，恢复后补传', has: { duration: 1 }, f: mk({}) },
+      { mode: 'delay', title: '报文延迟', desc: '所有出向报文延迟指定毫秒', has: { duration: 1, ms: 1 }, f: mk({ durationSec: 30, ms: 300 }) },
+      { mode: 'duplicate', title: '重复报文', desc: '出向遥测重复发送（平台按 ts 幂等去重）', has: { count: 1 }, f: mk({}) },
+      { mode: 'badJson', title: '坏报文', desc: '发送非法 JSON（平台拒绝并记日志）', has: { count: 1 }, f: mk({}) },
+      { mode: 'missingField', title: '缺失字段', desc: '遥测丢指定字段（dqf 应标 1）', has: { count: 1, field: 1 }, f: mk({}) },
+      { mode: 'outOfRange', title: '越界数值', desc: '指定字段注入越界值（dqf 应标 2）', has: { count: 1, key: 1, value: 1 }, f: mk({}) },
+      { mode: 'rejectCmd', title: '拒绝指令', desc: '下一条 RPC 指令回 REJECTED（errCode 2001）', has: { count: 1 }, f: mk({}) },
+      { mode: 'failCmd', title: '执行失败', desc: '下一条 RPC 指令回 FAILED（errCode 2003）', has: { count: 1 }, f: mk({}) },
+    ]);
+    const inject = m => {
+      if (!fDevice.value) return msg('warning', '请先选择设备');
+      const body = { mode: m.mode };
+      if (m.has.duration) body.durationSec = m.f.durationSec;
+      if (m.has.ms) body.ms = m.f.ms;
+      if (m.has.count) body.count = m.f.count;
+      if (m.has.field) body.field = m.f.field;
+      if (m.has.key) body.key = m.f.key;
+      if (m.has.value) body.value = m.f.value;
+      run(() => api('POST', `/api/devices/${fDevice.value}/inject`, body), '已注入 ' + m.title).then(loadDevices);
+    };
+
+    // ---------- 证书 ----------
+    const certs = ref([]);
+    const expiring = ref([]);
+    const expiryDays = ref(30);
+    const dlgIssue = ref(false);
+    const issueForm = reactive({ name: '', days: 365 });
+    const dlgCsr = ref(false);
+    const csrForm = reactive({ name: '', csrPem: '', days: 365 });
+    const dlgCert = ref(false);
+    const certDetail = ref({});
+    const loadCerts = () => run(() => api('GET', '/api/certs')).then(r => { if (r) certs.value = r; });
+    const checkExpiry = () => run(() => api('GET', `/api/certs/expiry?days=${expiryDays.value}`)).then(r => { expiring.value = r || []; if (r && !r.length) msg('success', `${expiryDays.value} 天内无到期证书`); });
+    const issueCert = () => run(() => api('POST', '/api/certs/device', { ...issueForm }), '证书已签发').then(r => { if (r) { dlgIssue.value = false; loadCerts(); } });
+    const signCsr = () => run(() => api('POST', '/api/certs/csr', { ...csrForm }), 'CSR 已签发').then(r => { if (r) { dlgCsr.value = false; loadCerts(); } });
+    const openCert = n => run(() => api('GET', '/api/certs/' + n)).then(r => { if (r) { certDetail.value = r; dlgCert.value = true; } });
+    const verifyCert = n => run(() => api('POST', `/api/certs/${n}/verify`)).then(r => { const ok = r && String(r.result).includes('OK') && !String(r.result).includes('FAILED'); msg(ok ? 'success' : 'error', '校验：' + String(r && r.result || '').trim()); });
+    const tbRegister = n => run(() => api('POST', `/api/certs/${n}/tb-register`, { type: 'default' }), '已注册到 ThingsBoard（X.509 凭据）');
+    const revokeCert = n => run(() => api('POST', `/api/certs/${n}/revoke`, { reason: 'unspecified', tbRevoke: true }), '已撤销并重置 TB 凭据').then(loadCerts);
+
+    // ---------- 日志 ----------
+    const logs = ref([]);
+    const autoLogs = ref(true);
+    const msgTypes = ['M01', 'M02', 'M05', 'M06', 'M07', 'M08', 'M12', 'M13', 'M14', 'hb', 'inject'];
+    const logFilter = reactive({ device: '', direction: '', msgType: '', q: '', limit: 200 });
+    const logParams = () => {
+      const p = new URLSearchParams();
+      for (const k of ['device', 'direction', 'msgType', 'q']) if (logFilter[k]) p.set(k, logFilter[k]);
+      p.set('limit', logFilter.limit);
+      return p.toString();
+    };
+    const loadLogs = () => run(() => api('GET', '/api/logs?' + logParams())).then(r => { if (r) logs.value = r; });
+    const exportLogs = fmt => { window.open('/api/logs/export?fmt=' + fmt + '&' + logParams(), '_blank'); };
+
+    // ---------- 健康与轮询 ----------
+    const loadHealth = () => api('GET', '/api/health').then(h => health.value = h).catch(() => health.value = { status: 'down' });
+    watch(tab, t => {
+      if (t === 'devices') loadDevices();
+      else if (t === 'certs') { loadCerts(); }
+      else if (t === 'logs') loadLogs();
+    });
+    setInterval(() => {
+      loadHealth();
+      if (tab.value === 'devices' && autoDevices.value) loadDevices();
+      else if (tab.value === 'faults' && autoDevices.value) loadDevices();
+      else if (tab.value === 'logs' && autoLogs.value) loadLogs();
+    }, 2000);
+
+    loadDevices(); loadHealth();
+    return {
+      tab, health, devices, autoDevices, runStateLabel, runStateType, faultLabel, fmtNum, fmtTs, pretty,
+      loadDevices, devAction, delDevice, dlgCreate, createForm, openCreate, createDevice,
+      dlgCurve, curveForm, openCurve, saveCurve,
+      dlgLedger, ledgerName, ledger, openLedger, loadLedger,
+      fDevice, curDev, faultModes, inject,
+      certs, expiring, expiryDays, dlgIssue, issueForm, dlgCsr, csrForm, dlgCert, certDetail,
+      loadCerts, checkExpiry, issueCert, signCsr, openCert, verifyCert, tbRegister, revokeCert,
+      logs, autoLogs, msgTypes, logFilter, loadLogs, exportLogs,
+      RefreshCw: ElementPlusIconsVue.Refresh, Plus: ElementPlusIconsVue.Plus, Search: ElementPlusIconsVue.Search,
+    };
+  }
+});
+app.use(ElementPlus, { locale: ElementPlusLocaleZhCn });
+for (const [name, comp] of Object.entries(ElementPlusIconsVue)) app.component(name, comp);
+app.mount('#app');
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+# =====================================================================
+# 虚拟电厂物联接入验证项目 — ThingsBoard CE 3.5.1 部署编排
+# 镜像固定：thingsboard/tb-postgres:3.5.1（单体镜像，内嵌 PostgreSQL 12，
+#           数据库位于容器内 /data/db，通过命名卷持久化，无独立数据库容器）
+# 端口规划（对外统一 1xxxx，避免与主机冲突）：
+#   18080 -> 9090   TB Web UI / REST API
+#   18885 -> 8883   MQTT over TLS（主接入；P3 启用 X.509 双向认证后生效）
+#                   （18883 已被本机既有服务占用，故调整；可经 .env 修改）
+#   18886 -> 1883   MQTT 明文（仅调试，见 docker-compose.debug-mqtt.yml，默认关闭）
+# 首次启动：镜像 start-tb.sh 自动执行 install-tb.sh --loadDemo 初始化库与演示数据，
+#           完成标志写入 /data/.firstlaunch；后续启动不再初始化。
+# =====================================================================
+
+name: vpp-thingsboard
+
+services:
+  thingsboard:
+    image: ${TB_IMAGE:-thingsboard/tb-postgres:3.5.1}
+    container_name: vpp-thingsboard
+    restart: unless-stopped
+    ports:
+      - "${TB_HTTP_PORT:-18080}:9090"
+      - "${MQTTS_PORT:-18883}:8883"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # ---- JVM ----
+      JAVA_OPTS: ${JAVA_OPTS:--Xms512m -Xmx1536m}
+      # ---- MQTT 传输 ----
+      # 明文 1883 容器内保持开启（默认），但对外仅在 debug 编排中暴露 18884
+      MQTT_ENABLED: "true"
+      # TLS：P2 阶段暂为 false（证书体系 P3 交付后置 true 并挂载 PEM）
+      MQTT_SSL_ENABLED: ${MQTT_SSL_ENABLED:-false}
+      MQTT_SSL_BIND_PORT: "8883"
+      MQTT_SSL_CREDENTIALS_TYPE: ${MQTT_SSL_CREDENTIALS_TYPE:-PEM}
+      MQTT_SSL_PEM_CERT: ${MQTT_SSL_PEM_CERT:-mqttserver.pem}
+      MQTT_SSL_PEM_KEY: ${MQTT_SSL_PEM_KEY:-mqttserver_key.pem}
+      # 不挂载证书时上述默认路径不存在，TLS 关闭状态下不会触发加载
+      # （.env 中同名变量会在 compose 变量替换层自动生效）
+    volumes:
+      - tb-data:/data
+      - tb-logs:/var/log/thingsboard
+      # P3：MQTT TLS 服务器证书（certmgr issue-server 产物，只读挂载）
+      - ./certs/server:/certs/server:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "200m"
+        max-file: "10"
+    healthcheck:
+      # 容器内无 curl/nc，使用 wget 探测 TB HTTP 服务
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9090/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    stop_grace_period: 1m
+
+volumes:
+  tb-data:
+    name: vpp-tb-data
+  tb-logs:
+    name: vpp-tb-logs

@@ -1,0 +1,201 @@
+"""PKI 高层管理：根CA/中间CA/服务器证书/设备证书、登记簿、吊销标记。
+
+目录布局（base_dir 默认 certmgr/secrets，不入代码仓库）：
+  base_dir/
+  ├── root/          ca.pem ca_key.pem ca.srl
+  ├── intermediate/  ca.pem ca_key.pem ca-chain.pem(中间+根)
+  ├── registry.json  签发登记簿（名称/序列号/有效期/吊销状态）
+  └── devices/<name>/ key.pem csr.pem cert.pem fullchain.pem
+服务器证书输出目录由调用方指定（默认 deploy/certs/server）。
+"""
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+
+from . import openssl_tool as ossl
+
+DEF_ROOT_CN = "VPP Root CA"
+DEF_INT_CN = "VPP Intermediate CA 01"
+DEF_ORG = "VPP-Lab"
+
+
+class PKI:
+    def __init__(self, base_dir: Path):
+        self.base = Path(base_dir)
+        self.root_dir = self.base / "root"
+        self.int_dir = self.base / "intermediate"
+        self.dev_dir = self.base / "devices"
+        self.registry_file = self.base / "registry.json"
+
+    # ---------- registry ----------
+    def _registry(self) -> dict:
+        if self.registry_file.exists():
+            return json.loads(self.registry_file.read_text())
+        return {"issued": {}}
+
+    def _save_registry(self, reg: dict) -> None:
+        self.registry_file.parent.mkdir(parents=True, exist_ok=True)
+        self.registry_file.write_text(json.dumps(reg, ensure_ascii=False, indent=2))
+
+    def _record(self, name: str, kind: str, cert: Path, files: dict, **extra) -> None:
+        reg = self._registry()
+        info = ossl.info(cert)
+        reg["issued"][name] = {
+            "kind": kind,
+            "cn": info.get("cn", ""),
+            "serial": info.get("serial", ""),
+            "notBefore": info.get("notBefore", ""),
+            "notAfter": info.get("notAfter", ""),
+            "files": {k: str(v) for k, v in files.items()},
+            "revokedAt": None,
+            **extra,
+        }
+        self._save_registry(reg)
+
+    # ---------- CA ----------
+    def init_ca(
+        self,
+        org: str = DEF_ORG,
+        root_cn: str = DEF_ROOT_CN,
+        int_cn: str = DEF_INT_CN,
+        days_root: int = 3650,
+        days_int: int = 1825,
+        force: bool = False,
+    ) -> dict:
+        root_cert = self.root_dir / "ca.pem"
+        if root_cert.exists() and not force:
+            raise FileExistsError(f"CA 已存在：{root_cert}（--force 覆盖将作废全部已签发证书）")
+        for d in (self.root_dir, self.int_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+        # 根 CA
+        root_key = self.root_dir / "ca_key.pem"
+        ossl.gen_key(root_key, 4096)
+        ossl.self_signed_root_ca(root_key, root_cert, f"/O={org}/CN={root_cn}", days_root)
+        # 中间 CA
+        int_key = self.int_dir / "ca_key.pem"
+        int_csr = self.int_dir / "ca.csr"
+        int_cert = self.int_dir / "ca.pem"
+        ossl.gen_key(int_key, 4096)
+        ossl.make_csr(int_key, int_csr, f"/O={org}/CN={int_cn}")
+        ossl.sign_csr(int_csr, root_cert, root_key, int_cert, days_int, ossl.intermediate_ca_ext())
+        chain = self.int_dir / "ca-chain.pem"
+        chain.write_text(int_cert.read_text() + root_cert.read_text())
+        self._record(root_cn, "root-ca", root_cert, {"cert": root_cert, "key": root_key}, org=org)
+        self._record(int_cn, "intermediate-ca", int_cert,
+                     {"cert": int_cert, "key": int_key, "chain": chain}, org=org)
+        return {"root": str(root_cert), "intermediate": str(int_cert), "chain": str(chain)}
+
+    def ca_paths(self) -> dict:
+        return {
+            "root_cert": self.root_dir / "ca.pem",
+            "root_key": self.root_dir / "ca_key.pem",
+            "int_cert": self.int_dir / "ca.pem",
+            "int_key": self.int_dir / "ca_key.pem",
+            "chain": self.int_dir / "ca-chain.pem",
+        }
+
+    # ---------- 服务器证书 ----------
+    def issue_server_cert(
+        self, out_dir: Path, name: str = "server", days: int = 825,
+        dns: list[str] | None = None, ips: list[str] | None = None,
+        org: str = DEF_ORG,
+    ) -> dict:
+        ca = self.ca_paths()
+        for k, p in ca.items():
+            if not Path(p).exists():
+                raise FileNotFoundError(f"缺少 CA 文件 {p}，请先 init-ca")
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        key, csr = out_dir / f"{name}_key.pem", out_dir / f"{name}.csr"
+        cert, fullchain = out_dir / f"{name}.pem", out_dir / f"{name}-fullchain.pem"
+        ossl.gen_key(key)
+        ossl.make_csr(key, csr, f"/O={org}/CN={name}")
+        ossl.sign_csr(csr, ca["int_cert"], ca["int_key"], cert, days,
+                      ossl.server_cert_ext(dns or ["localhost"], ips or ["127.0.0.1"]))
+        fullchain.write_text(cert.read_text() + (ca["int_cert"]).read_text())
+        self._record(name, "server", cert,
+                     {"cert": cert, "key": key, "fullchain": fullchain, "csr": csr},
+                     dns=dns, ips=ips, outDir=str(out_dir))
+        return {"cert": str(cert), "key": str(key), "fullchain": str(fullchain)}
+
+    # ---------- 设备证书 ----------
+    def issue_device_cert(self, name: str, days: int = 365, org: str = DEF_ORG,
+                          out_dir: Path | None = None) -> dict:
+        ca = self.ca_paths()
+        d = Path(out_dir) if out_dir else self.dev_dir / name
+        d.mkdir(parents=True, exist_ok=True)
+        key, csr = d / "key.pem", d / "csr.pem"
+        cert, fullchain = d / "cert.pem", d / "fullchain.pem"
+        ossl.gen_key(key)
+        ossl.make_csr(key, csr, f"/O={org}/CN={name}")
+        ossl.sign_csr(csr, ca["int_cert"], ca["int_key"], cert, days, ossl.device_cert_ext(name))
+        fullchain.write_text(cert.read_text() + (ca["int_cert"]).read_text())
+        self._record(name, "device", cert,
+                     {"cert": cert, "key": key, "fullchain": fullchain, "csr": csr})
+        return {"name": name, "cert": str(cert), "key": str(key),
+                "fullchain": str(fullchain), "dir": str(d)}
+
+    def sign_external_csr(self, csr: Path, name: str, days: int = 365,
+                          out_dir: Path | None = None) -> dict:
+        """厂家自带密钥对与 CSR：只签发证书，私钥不出厂家环境。"""
+        ca = self.ca_paths()
+        d = Path(out_dir) if out_dir else self.dev_dir / name
+        d.mkdir(parents=True, exist_ok=True)
+        cert, fullchain = d / "cert.pem", d / "fullchain.pem"
+        ossl.sign_csr(Path(csr), ca["int_cert"], ca["int_key"], cert, days,
+                      ossl.device_cert_ext(name))
+        fullchain.write_text(cert.read_text() + (ca["int_cert"]).read_text())
+        self._record(name, "device(csr)", cert, {"cert": cert, "fullchain": fullchain},
+                     sourceCsr=str(csr))
+        return {"name": name, "cert": str(cert), "fullchain": str(fullchain), "dir": str(d)}
+
+    # ---------- 校验/查询/吊销 ----------
+    def verify_device(self, name: str) -> str:
+        cert = self.dev_dir / name / "cert.pem"
+        chain = self.int_dir / "ca-chain.pem"
+        return ossl.verify(cert, self.root_dir / "ca.pem", chain)
+
+    def verify_cert_files(self, cert: Path, chain: Path | None = None) -> str:
+        return ossl.verify(Path(cert), self.root_dir / "ca.pem",
+                           *( [Path(chain)] if chain else [self.int_dir / "ca-chain.pem"] ))
+
+    def list_certs(self) -> list[dict]:
+        reg = self._registry()
+        return [
+            {"name": k, **v}
+            for k, v in sorted(reg["issued"].items())
+        ]
+
+    def revoke(self, name: str, reason: str = "unspecified") -> dict:
+        reg = self._registry()
+        if name not in reg["issued"]:
+            raise KeyError(f"登记簿中不存在：{name}")
+        reg["issued"][name]["revokedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        reg["issued"][name]["revokeReason"] = reason
+        self._save_registry(reg)
+        return {"name": name, "revoked": True, "reason": reason,
+                "note": "TB CE 3.5.1 不消费 CRL：平台侧生效须同步删除 TB 设备 X.509 凭据（tb-revoke-device）"}
+
+    def check_expiry(self, within_days: int = 30) -> list[dict]:
+        """解析 notAfter 并比较（OpenSSL 格式如 'notAfter=Jun  1 00:00:00 2027 GMT'）。"""
+        import datetime
+
+        soon = []
+        for c in self.list_certs():
+            na = c.get("notAfter", "")
+            try:
+                dt = datetime.datetime.strptime(na, "%b %d %H:%M:%S %Y %Z")
+            except ValueError:
+                continue
+            left = (dt - datetime.datetime.utcnow()).days
+            if left <= within_days:
+                soon.append({"name": c["name"], "notAfter": na, "daysLeft": left,
+                             "revokedAt": c.get("revokedAt")})
+        return soon
+
+    def cert_pem(self, name: str) -> str:
+        files = self._registry()["issued"][name]["files"]
+        return Path(files["cert"]).read_text()

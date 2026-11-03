@@ -1,0 +1,4 @@
+# certmgr 密钥与证书产物不入代码仓库（需求 3.3：根CA私钥安全保存）
+secrets/
+__pycache__/
+*.pyc
