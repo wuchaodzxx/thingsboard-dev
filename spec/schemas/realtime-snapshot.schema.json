@@ -21,7 +21,18 @@
     "dc_i": { "type": "number", "minimum": 0, "maximum": 2000 },
     "dc_p": { "type": "number", "minimum": 0, "maximum": 120000 },
     "irradi": { "type": "number", "minimum": 0, "maximum": 2000 },
-    "t_mod": { "type": "number", "minimum": -40, "maximum": 120 }
+    "t_mod": { "type": "number", "minimum": -40, "maximum": 120 },
+    "soh": { "type": "number", "minimum": 0, "maximum": 100 },
+    "cellVMax": { "type": "number", "minimum": 0, "maximum": 5 },
+    "cellVMin": { "type": "number", "minimum": 0, "maximum": 5 },
+    "cellTMax": { "type": "number", "minimum": -40, "maximum": 90 },
+    "cellTMin": { "type": "number", "minimum": -40, "maximum": 90 },
+    "cycCnt": { "type": "integer", "minimum": 0 },
+    "adjUpCap": { "type": "number", "minimum": 0 },
+    "adjDownCap": { "type": "number", "minimum": 0 },
+    "shedState": { "type": "integer", "enum": [0, 1, 2] },
+    "loadType": { "type": "integer", "minimum": 1, "maximum": 99 },
+    "windSpeed": { "type": "number", "minimum": 0, "maximum": 60, "description": "瞬时风速 m/s（devType=wind）" }
   },
   "additionalProperties": false
 }

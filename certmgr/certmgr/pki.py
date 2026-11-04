@@ -152,6 +152,38 @@ class PKI:
                      sourceCsr=str(csr))
         return {"name": name, "cert": str(cert), "fullchain": str(fullchain), "dir": str(d)}
 
+    def import_device_cert(self, name: str, cert_pem: str,
+                           key_pem: str | None = None) -> dict:
+        """手动配置证书：导入外部已有设备证书（PEM）并登记入册，私钥可选一并落盘。
+
+        适用场景：证书由第三方/厂家侧预先持有，平台侧仅登记证书用于信任校验；
+        模拟器本机连接需私钥（key.pem），厂家侧持有私钥时不导入。
+        """
+        cert_pem = (cert_pem or "").strip()
+        if "-----BEGIN CERTIFICATE-----" not in cert_pem:
+            raise ValueError("certPem 不是 PEM 证书（缺少 BEGIN CERTIFICATE）")
+        d = self.dev_dir / name
+        d.mkdir(parents=True, exist_ok=True)
+        cert, fullchain = d / "cert.pem", d / "fullchain.pem"
+        cert.write_text(cert_pem + "\n")
+        info = ossl.info(cert)
+        if not info.get("cn"):
+            raise ValueError("证书解析失败或缺少 CN")
+        chain = self.int_dir / "ca-chain.pem"
+        fullchain.write_text(cert_pem + "\n"
+                             + (chain.read_text() if chain.exists() else ""))
+        files = {"cert": cert, "fullchain": fullchain}
+        key_imported = False
+        if key_pem and "PRIVATE KEY" in key_pem:
+            key = d / "key.pem"
+            key.write_text(key_pem.strip() + "\n")
+            files["key"] = key
+            key_imported = True
+        self._record(name, "device(import)", cert, files, source="manual-import")
+        return {"name": name, "cn": info.get("cn", ""), "serial": info.get("serial", ""),
+                "notAfter": info.get("notAfter", ""), "dir": str(d),
+                "keyImported": key_imported}
+
     # ---------- 校验/查询/吊销 ----------
     def verify_device(self, name: str) -> str:
         cert = self.dev_dir / name / "cert.pem"

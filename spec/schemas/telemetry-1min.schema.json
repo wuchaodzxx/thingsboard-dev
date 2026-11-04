@@ -36,7 +36,8 @@
         "adjUpCap": { "type": "number", "minimum": 0 },
         "adjDownCap": { "type": "number", "minimum": 0 },
         "shedState": { "type": "integer", "enum": [0, 1, 2] },
-        "loadType": { "type": "integer", "minimum": 1, "maximum": 99 }
+        "loadType": { "type": "integer", "minimum": 1, "maximum": 99 },
+        "windSpeed": { "type": "number", "minimum": 0, "maximum": 60, "description": "瞬时风速 m/s（devType=wind）" }
       },
       "additionalProperties": false
     }

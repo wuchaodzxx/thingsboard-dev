@@ -14,6 +14,7 @@
     "hwVer": { "type": "string", "maxLength": 16 },
     "protocolVer": { "type": "string", "const": "vpp-1.0" },
     "capKw": { "type": "number", "exclusiveMinimum": 0, "description": "额定容量kW" },
+    "loadType": { "$ref": "_common.schema.json#/definitions/loadType", "description": "devType=load 时必填，其余类型不适用" },
     "firstBootTs": { "$ref": "_common.schema.json#/definitions/tsMs" }
   },
   "additionalProperties": true

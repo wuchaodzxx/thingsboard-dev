@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("tb-register", help="创建 TB 设备并绑定 X.509 凭据")
     p.add_argument("--name", required=True, help="设备名（=证书 CN）")
-    p.add_argument("--type", default="default", help="设备类型 pv|pcs|flex|default")
+    p.add_argument("--type", default="default", help="设备类型 pv|pcs|load|wind|default")
     p.add_argument("--profile", default=None, help="设备配置档案（默认=type）")
     p.add_argument("--tb-url", default=os.environ.get("TB_URL", "http://localhost:18080"))
     p.add_argument("--tb-user", default=os.environ.get("TB_USER", "tenant@thingsboard.org"))

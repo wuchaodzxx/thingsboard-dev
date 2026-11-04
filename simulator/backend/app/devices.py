@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import queue
 import random
 import ssl
@@ -36,12 +37,19 @@ SETTABLE_PARAMS = {"rampRate", "qMin", "qMax", "respTimeS", "regMode", "upTimeS"
 @dataclass
 class DeviceConfig:
     name: str
-    devType: str = "pv"                # pv | pcs | flex
+    devType: str = "pv"                # pv | pcs | load | wind
     capKw: float = 100.0
     devModel: str = "SIM-100"
     vendor: str = "VPP-Lab"
     swVer: str = "V1.0.0"
     hwVer: str = "H1.0"
+    # 负荷特征模拟（devType=load/wind，docs/01 §8.5）
+    loadType: int = 1                  # loadType 负荷分类码（1 空调…20~99 厂家自定义）
+    loadBaseRatio: float = 0.0         # 基线负荷率 0~1（0=按 loadType 特征曲线）
+    loadNoiseAmp: float = 0.0          # 随机波动幅度（0=默认 0.08）
+    dutyOnMin: int = 0                 # 占空启停：运行分钟（0=不启用）
+    dutyOffMin: int = 0                # 占空启停：停运分钟
+    windSpeedAvg: float = 8.0          # wind 平均风速 m/s
     # M07 约束
     pMin: float = 0.0
     pMax: float = 100.0
@@ -80,7 +88,12 @@ class DeviceConfig:
     @staticmethod
     def defaults_for(dev_type: str, name: str, cap_kw: float) -> "DeviceConfig":
         c = DeviceConfig(name=name, devType=dev_type, capKw=cap_kw)
-        c.pMin, c.pMax = (0.0, cap_kw) if dev_type == "pv" else ((-cap_kw, cap_kw) if dev_type == "pcs" else (-cap_kw, 0.0))
+        if dev_type in ("pv", "wind"):
+            c.pMin, c.pMax = 0.0, cap_kw
+        elif dev_type == "pcs":
+            c.pMin, c.pMax = -cap_kw, cap_kw
+        else:                              # load：受电为负
+            c.pMin, c.pMax = -cap_kw, 0.0
         c.rampRate = max(10.0, cap_kw / 2)
         if dev_type == "pcs":
             c.chgPMax = c.disPMax = cap_kw
@@ -161,8 +174,11 @@ class DeviceSim:
         self.cli.on_connect = self._on_connect
         self.cli.on_disconnect = self._on_disconnect
         self.cli.on_message = self._on_message
-        self.cli.tls_set(ca_certs=self.ca_file, certfile=self.cert_file, keyfile=self.key_file,
-                         cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+        # 证书可延后配置（手动流程：创建后签发/导入证书）：缺失时标记未就绪，
+        # 首次连接尝试时再加载（_ensure_tls），成功后即可正常接入
+        self._tls_ready = False
+        self._cert_mtime = None   # 证书文件 mtime，变更后自动重载（手动配置证书场景）
+        self._ensure_tls()
         # 自管网络循环：由 _worker 每 tick 调 cli.loop(0) 驱动收发，
         # 不使用 paho loop_start 线程（其主动断开后线程死亡且与手动重连形成双轨竞争）
         self._thread = threading.Thread(target=self._worker, name=f"sim-{cfg.name}", daemon=True)
@@ -220,6 +236,7 @@ class DeviceSim:
         return {
             "name": self.cfg.name, "devType": self.cfg.devType, "capKw": self.cfg.capKw,
             "connected": self.connected, "wantConnect": self._want_connect,
+            "certReady": self._tls_ready,
             "userDisconnected": self._user_disconnected,
             "retryAttempt": self._retry_attempt, "lastError": self.last_error,
             "uptimeSec": (int(time.time() * 1000) - self.started_at) // 1000,
@@ -324,6 +341,7 @@ class DeviceSim:
         except Exception as e:  # noqa: BLE001
             log.exception("on_message error")
             LOGS.add(device=self.cfg.name, direction="in", topic=msg.topic,
+                     raw=msg.payload.decode(errors="replace"),
                      result="error", error=f"{type(e).__name__}: {e}")
 
     # ---------------- 发布通道（统一异常注入/缓存入口） ----------------
@@ -370,14 +388,14 @@ class DeviceSim:
         self._tx_queue.put((topic, body, qos))
         self.sent_count += 1
         LOGS.add(device=self.cfg.name, direction="out", topic=topic, qos=qos,
-                 msg_type=msg_type, cmd_id=cmd_id, payload=sent_payload,
+                 msg_type=msg_type, cmd_id=cmd_id, payload=sent_payload, raw=body,
                  result="sent")
         if f["dupRemaining"] > 0 and is_data_tele:
             f["dupRemaining"] -= 1
             self._tx_queue.put((topic, body, qos))
             self.sent_count += 1
             LOGS.add(device=self.cfg.name, direction="out", topic=topic, qos=qos,
-                     msg_type=msg_type, cmd_id=cmd_id, payload=payload,
+                     msg_type=msg_type, cmd_id=cmd_id, payload=payload, raw=body,
                      result="sent-duplicate")
         return True
 
@@ -461,7 +479,52 @@ class DeviceSim:
                 LOGS.add(device=self.cfg.name, direction="evt", topic=topic, qos=qos,
                          result="error", error=f"flush: {e}")
 
+    def _rebuild_client(self):
+        """重建底层 paho Client。1.6.1 的 tls_set/tls_set_context 仅允许调用
+        一次（二次调用抛 ValueError: SSL/TLS has already been configured.），
+        故证书文件被签发/导入覆盖后须用新实例重新加载。仅 worker 线程调用，
+        无并发竞争。"""
+        old = self.cli
+        cli = mqtt.Client(client_id=f"sim-{self.cfg.name}", protocol=mqtt.MQTTv311)
+        cli.on_connect = self._on_connect
+        cli.on_disconnect = self._on_disconnect
+        cli.on_message = self._on_message
+        self.cli = cli
+        self.connected = False
+        try:                        # 旧实例若有残留连接，关闭并清空其 socket 引用
+            old._sock_close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _ensure_tls(self) -> bool:
+        """加载设备证书链（幂等）。证书文件缺失返回 False（手动配置后重试连接）；
+        文件变更（签发/导入覆盖）后自动重建客户端并重新加载，无需重启模拟器。"""
+        try:
+            mtime = os.path.getmtime(self.cert_file)
+        except OSError:
+            self._tls_ready = False
+            self.last_error = "证书未配置，签发/导入后重试连接"
+            return False
+        if self._tls_ready and mtime == self._cert_mtime:
+            return True
+        if self._tls_ready:         # 已加载过且文件变化：必须换新客户端实例
+            self._rebuild_client()
+        try:
+            self.cli.tls_set(ca_certs=self.ca_file, certfile=self.cert_file, keyfile=self.key_file,
+                             cert_reqs=ssl.CERT_REQUIRED, tls_version=ssl.PROTOCOL_TLS_CLIENT)
+            self._cert_mtime = mtime
+            self._tls_ready = True
+            return True
+        except (FileNotFoundError, ssl.SSLError, ValueError) as e:
+            self._tls_ready = False
+            self.last_error = f"证书加载失败（{type(e).__name__}: {e}）"
+            return False
+
     def _try_connect(self):
+        if not self._ensure_tls():
+            self._retry_attempt += 1
+            self._next_retry_ts = time.time() + 5.0     # 证书就绪后 5s 内重试
+            return
         try:
             self.cli.connect(self.mqtt_host, self.mqtt_port, keepalive=60)
             # inflight 无限：paho 默认 20 条 QoS1 窗口，满时 publish() 会在 worker
@@ -536,7 +599,7 @@ class DeviceSim:
             return 5
         if self.executing:
             return 8
-        if c.devType == "pv":
+        if c.devType in ("pv", "wind"):
             return 2 if self.cur_p > 0.5 else 1
         if c.devType == "pcs":
             return 4 if self.cur_p > 0.5 else (3 if self.cur_p < -0.5 else 1)
@@ -547,6 +610,8 @@ class DeviceSim:
         c = self.cfg
         if c.devType == "pv":
             plan = curves.pv_power(ts_ms, c.capKw, c.name)
+        elif c.devType == "wind":
+            plan = curves.wind_power(ts_ms, c.capKw, c.name, c.windSpeedAvg)
         elif c.devType == "pcs":
             plan = curves.pcs_schedule_target(ts_ms, c.chgPMax, c.disPMax)
             # SOC 边界保护
@@ -554,8 +619,13 @@ class DeviceSim:
                 plan = 0.0
             if plan < 0 and self.soc >= c.socMax:
                 plan = 0.0
-        else:
-            plan = curves.flex_power(ts_ms, c.capKw, c.name)
+        else:                              # load：按 loadType 特征曲线
+            plan = curves.load_power(
+                ts_ms, c.capKw, c.name, load_type=c.loadType,
+                base_ratio=(c.loadBaseRatio or None),
+                noise_amp=(c.loadNoiseAmp or None),
+                duty=((c.dutyOnMin, c.dutyOffMin)
+                      if c.dutyOnMin > 0 and c.dutyOffMin > 0 else None))
         if self.stopped:
             self.cur_p = 0.0
             return
@@ -596,10 +666,12 @@ class DeviceSim:
             vals.update({"soc": self.soc, "soh": 99.2,
                          "cellVMax": 3.351, "cellVMin": 3.328,
                          "cellTMax": 28.5, "cellTMin": 26.1, "cycCnt": self.cyc_cnt})
-        else:
-            vals.update({"loadType": 1, "shedState": self.shed_state,
+        elif c.devType == "load":
+            vals.update({"loadType": c.loadType, "shedState": self.shed_state,
                          "adjUpCap": round(abs(c.pMin) - abs(p), 2),
                          "adjDownCap": round(abs(p), 2)})
+        else:                              # wind：风速测点
+            vals.update({"windSpeed": curves.wind_speed(ts_ms, c.name, c.windSpeedAvg)})
         return vals
 
     def _snapshot_15m(self, ts_ms: int) -> dict:
@@ -620,7 +692,7 @@ class DeviceSim:
         if self._base_imp is not None:
             keep["e_imp_15"] = round(max(0.0, self._e_imp - self._base_imp), 3)
             keep["e_exp_15"] = round(max(0.0, self._e_exp - self._base_exp), 3)
-        if c.devType in ("pv", "pcs"):
+        if c.devType in ("pv", "pcs", "wind"):
             keep["e_day"] = self._e_day
         self._base_imp, self._base_exp = self._e_imp, self._e_exp
         return keep
@@ -640,12 +712,15 @@ class DeviceSim:
             now_ms = int(time.time() * 1000)
         except Exception:  # noqa: BLE001
             LOGS.add(device=self.cfg.name, direction="in", topic=msg.topic,
-                     msg_type="M12", result="error", error="JSON 解析失败")
+                     msg_type="M12", raw=msg.payload.decode(errors="replace"),
+                     result="error", error="JSON 解析失败")
             self._respond_rpc(req_id, {"cmdId": "unknown", "state": "REJECTED",
                                        "errCode": 1005, "errMsg": "bad json", "ts": int(time.time() * 1000)})
             return
         LOGS.add(device=self.cfg.name, direction="in", topic=msg.topic, qos=1,
-                 msg_type="M12", cmd_id=cmd_id, payload={"method": cmd_type, "envelope": env},
+                 msg_type="M12", cmd_id=cmd_id,
+                 payload={"method": cmd_type, "envelope": env},
+                 raw=msg.payload.decode(errors="replace"),
                  result="received")
 
         def rej(code: int, emsg: str):
@@ -780,10 +855,10 @@ class DeviceSim:
                 return 1001, "missing/invalid scope"
             if not (0 <= float(mp) <= c.capKw):
                 return 1002, f"maxP {mp} out of [0,{c.capKw}]"
-            if c.devType == "pv" and scope != "gen":
-                return 1002, f"scope {scope} not applicable to pv"
-            if c.devType == "flex":
-                return 1002, "setMaxPowerLimit not applicable to flex"
+            if c.devType in ("pv", "wind") and scope != "gen":
+                return 1002, f"scope {scope} not applicable to {c.devType}"
+            if c.devType == "load":
+                return 1002, "setMaxPowerLimit not applicable to load"
         elif cmd_type == "setRunMode":
             if not p.get("action") and not p.get("mode"):
                 return 1001, "need action or mode"
@@ -915,17 +990,21 @@ class DeviceSim:
             payload = json.loads(msg.payload.decode())
         except Exception:  # noqa: BLE001
             LOGS.add(device=self.cfg.name, direction="in", topic=msg.topic,
-                     msg_type="M08", result="error", error="JSON 解析失败")
+                     msg_type="M08", raw=msg.payload.decode(errors="replace"),
+                     result="error", error="JSON 解析失败")
             return
         LOGS.add(device=self.cfg.name, direction="in", topic=msg.topic, qos=1,
-                 msg_type="M08", payload=payload, result="received")
+                 msg_type="M08", payload=payload,
+                 raw=msg.payload.decode(errors="replace"), result="received")
         result, err = self._apply_shared(payload)
         report = {"cfgVerApplied": self.cfg.cfgVer, "cfgApplyTs": int(time.time() * 1000),
                   "cfgResult": result}
         if err:
             report["cfgApplyErr"] = err[:64]
         LOGS.add(device=self.cfg.name, direction="out", topic=T_ATTRIBUTES,
-                 msg_type="M08-ack", payload=report, result=("ok" if result == 0 else "rejected"))
+                 msg_type="M08-ack", payload=report,
+                 raw=json.dumps(report, ensure_ascii=False),
+                 result=("ok" if result == 0 else "rejected"))
         self._pub_attributes(report, msg_type="M08-ack")
 
     def _apply_shared(self, payload: dict) -> tuple[int, str]:

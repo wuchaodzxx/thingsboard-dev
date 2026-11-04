@@ -54,9 +54,10 @@ def health():
 # ---------------- 设备管理 ----------------
 class CreateDeviceReq(BaseModel):
     name: str
-    devType: str = "pv"          # pv | pcs | flex
+    devType: str = "pv"          # pv | pcs | load | wind
     capKw: float = 100.0
-    autoRegister: bool = True    # 签发证书（缺省时）并注册到 TB
+    loadType: int = 1            # devType=load 时生效：负荷分类码（docs/01 §8.5，1~99）
+    autoRegister: bool = True    # True=自动签发证书+注册 TB；False=创建后手动配置证书并手动注册
     autoConnect: bool = True
 
 
@@ -64,8 +65,10 @@ class CreateDeviceReq(BaseModel):
 def create_device(req: CreateDeviceReq):
     if not req.name or "/" in req.name or len(req.name) > 48:
         raise HTTPException(400, "非法设备名")
-    if req.devType not in ("pv", "pcs", "flex"):
-        raise HTTPException(400, "devType 必须为 pv|pcs|flex")
+    if req.devType not in ("pv", "pcs", "load", "wind"):
+        raise HTTPException(400, "devType 必须为 pv|pcs|load|wind")
+    if req.devType == "load" and not (1 <= req.loadType <= 99):
+        raise HTTPException(400, "loadType 必须为 1~99（编码见 docs/01 §8.5）")
     if req.name in manager.devices:      # 幂等复用：同名设备不重复签发/注册
         dev = manager.get(req.name)
         return {"created": req.name, "register": "reuse-existing",
@@ -73,18 +76,25 @@ def create_device(req: CreateDeviceReq):
     register_note = "skipped"
     if req.autoRegister:
         pki = certapi._pki()
-        have = any(c["name"] == req.name and c["kind"] == "device" for c in pki.list_certs())
-        if not have:
-            pki.issue_device_cert(req.name)
-            register_note = "cert-issued"
-        else:
-            register_note = "cert-exists"
+        with certapi._lock:
+            have = any(c["name"] == req.name and str(c["kind"]).startswith("device")
+                       for c in pki.list_certs())
+            if not have:
+                pki.issue_device_cert(req.name)
+                register_note = "cert-issued"
+            else:
+                register_note = "cert-exists"
+            cert_pem = pki.cert_pem(req.name)
         try:
-            certapi._tb().register_device_with_cert(req.name, pki.cert_pem(req.name), req.devType)
+            certapi._tb().register_device_with_cert(req.name, cert_pem, req.devType)
             register_note += "+tb-registered"
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"TB 注册失败: {e}") from e
+    else:
+        register_note = "manual-pending"   # 待手动配置证书 + 手动注册
     cfg = DeviceConfig.defaults_for(req.devType, req.name, req.capKw)
+    if req.devType == "load":
+        cfg.loadType = req.loadType
     dev = manager.create(cfg, auto_start=req.autoConnect)
     return {"created": req.name, "register": register_note, "status": dev.status()}
 
@@ -167,12 +177,99 @@ def adjust_curve(name: str, req: CurveReq):
         if v <= 0 and k != "socMin":
             raise HTTPException(400, f"{k} 必须为正数")
         setattr(c, k, v)
-    if c.devType in ("pv", "pcs"):
+    if c.devType in ("pv", "pcs", "wind"):
         c.pMax = c.capKw
         c.pMin = -c.capKw if c.devType == "pcs" else 0.0
+    elif c.devType == "load":
+        c.pMin, c.pMax = -c.capKw, 0.0
     if c.devType == "pcs":
         c.chgPMax, c.disPMax = (data.get("chgPMax", c.chgPMax), data.get("disPMax", c.disPMax))
     return {"name": name, "cfg": {k: getattr(c, k) for k in data} | {"pMin": c.pMin, "pMax": c.pMax}}
+
+
+# ---------------- 负荷特征模拟配置（devType=load/wind） ----------------
+class LoadProfileReq(BaseModel):
+    """负荷特征参数：空字段保持不变。load 设备与 wind 设备共用（wind 仅 windSpeedAvg 生效）。"""
+    loadType: int | None = None        # 负荷分类码 1~99（docs/01 §8.5 编码表）
+    baseRatio: float | None = None     # 基线负荷率 0~1（0/空=按 loadType 特征曲线）
+    noiseAmp: float | None = None      # 随机波动幅度 0~0.3（空=默认 0.08）
+    dutyOnMin: int | None = None       # 占空启停：运行分钟（0=不启用）
+    dutyOffMin: int | None = None      # 占空启停：停运分钟
+    windSpeedAvg: float | None = None  # wind 平均风速 m/s（1~25）
+
+
+@app.post("/api/devices/{name}/load-profile")
+def set_load_profile(name: str, req: LoadProfileReq):
+    """配置负荷特征模拟参数（负荷曲线形状/基线/波动/占空启停/风速）。"""
+    dev = manager.get(name) or _err404(name)
+    c = dev.cfg
+    if c.devType not in ("load", "wind"):
+        raise HTTPException(400, "仅 load/wind 类型设备支持负荷特征配置")
+    d = req.model_dump(exclude_none=True)
+    if "loadType" in d and not (1 <= d["loadType"] <= 99):
+        raise HTTPException(400, "loadType 必须为 1~99")
+    if "baseRatio" in d and not (0 < d["baseRatio"] <= 1):
+        raise HTTPException(400, "baseRatio 必须为 (0,1]")
+    if "noiseAmp" in d and not (0 <= d["noiseAmp"] <= 0.3):
+        raise HTTPException(400, "noiseAmp 必须为 0~0.3")
+    if "windSpeedAvg" in d and not (1 <= d["windSpeedAvg"] <= 25):
+        raise HTTPException(400, "windSpeedAvg 必须为 1~25 m/s")
+    on, off = d.get("dutyOnMin", c.dutyOnMin), d.get("dutyOffMin", c.dutyOffMin)
+    if on > 0 and off <= 0 or off > 0 and on <= 0:
+        raise HTTPException(400, "占空启停 dutyOnMin/dutyOffMin 必须同时 >0（或同时 0 关闭）")
+    if "loadType" in d:
+        c.loadType = d["loadType"]
+    if "baseRatio" in d:
+        c.loadBaseRatio = d["baseRatio"]
+    if "noiseAmp" in d:
+        c.loadNoiseAmp = d["noiseAmp"]
+    if "dutyOnMin" in d:
+        c.dutyOnMin = d["dutyOnMin"]
+    if "dutyOffMin" in d:
+        c.dutyOffMin = d["dutyOffMin"]
+    if "windSpeedAvg" in d:
+        c.windSpeedAvg = d["windSpeedAvg"]
+    return {"name": name, "devType": c.devType,
+            "loadProfile": {"loadType": c.loadType, "baseRatio": c.loadBaseRatio or None,
+                            "noiseAmp": c.loadNoiseAmp or None,
+                            "dutyOnMin": c.dutyOnMin, "dutyOffMin": c.dutyOffMin,
+                            "windSpeedAvg": c.windSpeedAvg}}
+
+
+@app.get("/api/devices/{name}/load-profile")
+def get_load_profile(name: str):
+    dev = manager.get(name) or _err404(name)
+    c = dev.cfg
+    return {"name": name, "devType": c.devType,
+            "loadProfile": {"loadType": c.loadType, "baseRatio": c.loadBaseRatio or None,
+                            "noiseAmp": c.loadNoiseAmp or None,
+                            "dutyOnMin": c.dutyOnMin, "dutyOffMin": c.dutyOffMin,
+                            "windSpeedAvg": c.windSpeedAvg}}
+
+
+# ---------------- 手动注册（创建后手动配置证书场景） ----------------
+@app.post("/api/devices/{name}/register")
+def register_device_manual(name: str):
+    """手动注册：使用已配置的设备证书在 TB 建档并绑定 X.509 凭据（devType 取设备配置）。
+
+    适用流程：创建设备(autoRegister=false) → 手动签发/导入证书 → 本接口注册 → 连接。
+    """
+    dev = manager.get(name) or _err404(name)
+    pki = certapi._pki()
+    with certapi._lock:
+        have = any(x["name"] == name and str(x["kind"]).startswith("device")
+                   for x in pki.list_certs())
+        if not have:
+            raise HTTPException(400, "设备证书未配置：请先签发（POST /api/certs/device）"
+                                     "或导入（POST /api/certs/import）")
+        cert_pem = pki.cert_pem(name)
+    try:
+        certapi._tb().register_device_with_cert(name, cert_pem, dev.cfg.devType)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"TB 注册失败: {e}") from e
+    LOGS.add(device=name, direction="evt", result="tb-registered",
+             error=f"devType={dev.cfg.devType}")
+    return {"name": name, "register": "tb-registered", "devType": dev.cfg.devType}
 
 
 @app.get("/api/devices/{name}/sent")

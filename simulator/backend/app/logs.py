@@ -10,8 +10,12 @@ from collections import deque
 from typing import Any
 
 MAX_LOGS = 20000
+RAW_MAX = 4000                     # 原始报文截断长度（超长截断并标注字节数）
 SENSITIVE_KEY = re.compile(r"(pass|secret|token|private_?key|credential)", re.I)
 REDACTED = "***REDACTED***"
+
+# 数据方向（设备视角）：out=上行（设备→平台）、in=下行（平台→设备）、evt=状态事件
+DIRECTION_CN = {"out": "上行(设备→平台)", "in": "下行(平台→设备)", "evt": "事件"}
 
 
 def sanitize(obj: Any) -> Any:
@@ -28,8 +32,9 @@ def sanitize(obj: Any) -> Any:
 
 class LogStore:
     """进程级日志存储（线程安全）。单条结构：
-    {ts, deviceId, direction, topic, qos, msgType, cmdId, payload, result, error, latencyMs}
-    direction: in(设备收到) / out(设备发出) / evt(状态事件)
+    {ts, deviceId, direction, topic, qos, msgType, cmdId, payload, raw, result, error, latencyMs}
+    direction: out(上行，设备发出) / in(下行，设备收到) / evt(状态事件)
+    payload: 结构化解析后的内容（已脱敏）；raw: 原始报文文本（截断至 RAW_MAX）
     """
 
     def __init__(self, maxlen: int = MAX_LOGS):
@@ -39,7 +44,8 @@ class LogStore:
 
     def add(self, *, device: str, direction: str, topic: str = "", qos: int | None = None,
             msg_type: str | None = None, cmd_id: str | None = None,
-            payload: Any = None, result: str = "ok", error: str | None = None,
+            payload: Any = None, raw: str | None = None,
+            result: str = "ok", error: str | None = None,
             latency_ms: int | None = None) -> dict:
         with self._lock:
             self.seq += 1
@@ -48,11 +54,13 @@ class LogStore:
                 "ts": int(__import__("time").time() * 1000),
                 "deviceId": device,
                 "direction": direction,
+                "directionCN": DIRECTION_CN.get(direction, direction),
                 "topic": topic,
                 "qos": qos,
                 "msgType": msg_type,
                 "cmdId": cmd_id,
                 "payload": sanitize(payload),
+                "raw": (raw[:RAW_MAX] + f"…(截断,共{len(raw)}B)") if raw and len(raw) > RAW_MAX else raw,
                 "result": result,
                 "error": error,
                 "latencyMs": latency_ms,
@@ -85,14 +93,19 @@ class LogStore:
 
     def export_csv(self, **kw) -> str:
         recs = self.query(limit=kw.pop("limit", 5000), **kw)
-        cols = ["seq", "ts", "deviceId", "direction", "topic", "qos",
-                "msgType", "cmdId", "result", "error", "latencyMs", "payload"]
+        cols = ["seq", "ts", "deviceId", "direction", "directionCN", "topic", "qos",
+                "msgType", "cmdId", "result", "error", "latencyMs", "payload", "raw"]
         out = io.StringIO()
         w = csv.writer(out)
         w.writerow(cols)
         for r in recs:
-            w.writerow([r.get(c) if c != "payload" else json.dumps(r.get("payload"), ensure_ascii=False)
-                        for c in cols])
+            row = []
+            for c in cols:
+                v = r.get(c)
+                if c in ("payload", "raw") and not isinstance(v, str):
+                    v = json.dumps(v, ensure_ascii=False)
+                row.append(v)
+            w.writerow(row)
         return out.getvalue()
 
 

@@ -1,9 +1,11 @@
 """功率曲线与测点模拟（确定性噪声，可复现）。
 
-三种设备类型：
+四种设备类型：
   pv   — 光伏逆变器：日照正弦曲线，白天发电 p>0，夜间 0
   pcs  — 储能 PCS：分时充放电计划（负=充电，正=放电），SOC 循环
-  flex — 柔性负荷：基线负荷曲线（受电 p<0），可上调/下调容量
+  load — 负荷：按 loadType 分类特征曲线（受电 p<0），可上调/下调容量，
+         支持基线负荷率/随机波动/周期启停（占空）自定义（docs/01 §8.5）
+  wind — 风电：风速日变化 + 湍流噪声，三次方功率关系，全天可能出力
 """
 from __future__ import annotations
 
@@ -59,15 +61,75 @@ def pcs_schedule_target(ts_ms: int, chg_pmax: float, dis_pmax: float) -> float:
     return 0.0
 
 
-def flex_power(ts_ms: int, cap_kw: float, seed: str) -> float:
-    """柔性负荷基线 kW（受电为负）：白天高夜间低。"""
+def _load_shape(load_type: int, hour: float) -> float:
+    """loadType 负荷特征形状系数（0~1，编码定义见 docs/01 §8.5）。
+
+    1 空调 / 2 充电桩 / 3 电采暖热泵 / 4 照明 / 5 工业电机 /
+    6 数据中心 / 7 水泵类 / 20~99 其他（厂家自定义，默认日间曲线）
+    """
+    if load_type == 1:                       # 空调：日间主峰 8~22
+        if 8 <= hour < 22:
+            return 0.55 + 0.25 * math.sin(math.pi * (hour - 8) / 14)
+        return 0.25
+    if load_type == 2:                       # 充电桩：白天散充 + 晚 18~24 高峰
+        if 18 <= hour < 24:
+            return 0.65 + 0.15 * math.sin(math.pi * (hour - 18) / 6)
+        if 7 <= hour < 18:
+            return 0.35
+        return 0.2                           # 凌晨低谷
+    if load_type == 3:                       # 电采暖/热泵：早晚双峰
+        if 6 <= hour < 9 or 17 <= hour < 22:
+            return 0.8
+        if 22 <= hour or hour < 6:
+            return 0.45
+        return 0.55
+    if load_type == 4:                       # 照明：晚间单一高峰
+        return 0.85 if 18 <= hour < 23 else 0.12
+    if load_type == 5:                       # 工业电机：三班倒近平坦
+        return 0.6
+    if load_type == 6:                       # 数据中心：恒定高负荷
+        return 0.8
+    if load_type == 7:                       # 水泵类：日间运行
+        return 0.5 if 7 <= hour < 20 else 0.15
+    return 0.6 + 0.15 * math.sin(math.pi * max(0.0, min(1.0, (hour - 7) / 15)))
+
+
+def load_power(ts_ms: int, cap_kw: float, seed: str, load_type: int = 1,
+               base_ratio: float | None = None,
+               noise_amp: float | None = None,
+               duty: tuple[int, int] | None = None) -> float:
+    """负荷功率 kW（受电为负），按 loadType 特征曲线模拟。
+
+    base_ratio 显式基线负荷率（0~1，空则按 loadType 形状）；
+    noise_amp 随机波动幅度（空则默认 0.08）；
+    duty=(on_min, off_min) 周期启停（模拟可中断负荷的占空运行）。
+    """
     hour = local_hour_of(ts_ms)
-    if 7 <= hour < 22:
-        base = cap_kw * (0.55 + 0.15 * math.sin(math.pi * (hour - 7) / 15))
-    else:
-        base = cap_kw * 0.2
-    p = base * (1.0 + _noise(seed, ts_ms // 60000, 0.08))
-    return round(-abs(p), 2)  # 受电为负
+    ratio = base_ratio if base_ratio else _load_shape(load_type, hour)
+    amp = noise_amp if noise_amp is not None else 0.08
+    p = cap_kw * ratio * (1.0 + _noise(seed, ts_ms // 60000, amp))
+    if duty and duty[0] > 0 and duty[1] > 0:    # 占空启停：分钟级周期
+        if (ts_ms // 60000) % (duty[0] + duty[1]) >= duty[0]:
+            p = 0.0
+    return round(-abs(p), 2)
+
+
+def wind_speed(ts_ms: int, seed: str, avg_speed: float = 8.0) -> float:
+    """模拟风速 m/s：日变化（午后大）+ 湍流噪声，确定性可复现。"""
+    hour = local_hour_of(ts_ms)
+    shape = 0.65 + 0.35 * math.sin(math.pi * (hour - 6) / 12)   # 6~18 时段大
+    v = avg_speed * shape * (1.0 + _noise(seed + "w", ts_ms // 60000, 0.15))
+    return round(max(0.0, v), 1)
+
+
+def wind_power(ts_ms: int, cap_kw: float, seed: str, avg_speed: float = 8.0) -> float:
+    """风电出力 kW：风速三次方关系，切入 3m/s，额定 12m/s，超过按额定出力。"""
+    v = wind_speed(ts_ms, seed, avg_speed)
+    cut_in, rated = 3.0, 12.0
+    if v < cut_in:
+        return 0.0
+    p = cap_kw * min(1.0, ((v - cut_in) / (rated - cut_in)) ** 3)
+    return round(p, 2)
 
 
 def energy_delta(p_kw: float, period_hours: float = 0.25) -> tuple[float, float]:

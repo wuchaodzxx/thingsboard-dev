@@ -50,6 +50,13 @@ class CsrReq(BaseModel):
     days: int = 365
 
 
+class ImportReq(BaseModel):
+    """手动配置证书：导入外部已有设备证书（第一次创建设备后），私钥可选一并导入。"""
+    name: str
+    certPem: str
+    keyPem: str | None = None   # 模拟器本机连接 TLS 需要私钥；厂家侧持有则不传
+
+
 class RevokeReq(BaseModel):
     reason: str = "unspecified"
     tbRevoke: bool = True
@@ -97,6 +104,23 @@ def sign_csr(req: CsrReq):
         raise HTTPException(500, f"{type(e).__name__}: {e}") from e
     finally:
         os.unlink(csr_path)
+
+
+@router.post("/import")
+def import_cert(req: ImportReq):
+    """手动配置证书（第一次创建设备后）：导入已有设备证书并登记入册。
+
+    证书须为 PEM；私钥可选导入（模拟器本机建立 TLS 连接需要 key.pem）。
+    """
+    if not req.name or "/" in req.name:
+        raise HTTPException(400, "非法名称")
+    try:
+        with _lock:
+            return sanitize(_pki().import_device_cert(req.name, req.certPem, req.keyPem))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"{type(e).__name__}: {e}") from e
 
 
 @router.get("/{name}")

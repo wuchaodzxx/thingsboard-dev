@@ -1,8 +1,8 @@
 {
  "scale": 1,
- "startedAt": 1793791452.299196,
- "endedAt": 1793792285.979567,
- "durationSec": 833.7,
+ "startedAt": 1793807094.539576,
+ "endedAt": 1793808066.41858,
+ "durationSec": 971.9,
  "hardware": {
   "hostname": "MacBook-Air-8.local",
   "platform": "macOS-27.2-arm64-arm-64bit",
@@ -11,9 +11,94 @@
   "python": "3.12.7",
   "memTotalMB": 16384,
   "tbVersion": "3.5.1",
-  "simUptimeSec": 1278
+  "simUptimeSec": 1680
  },
  "results": [
+  {
+   "id": "TC-IT-01",
+   "name": "devType=load 设备创建/注册/遥测（loadType=2 充电桩）",
+   "precondition": "模拟器与 TB 运行中，CA 链正常",
+   "steps": "1) 创建 load 设备 loadType=2 自动注册；2) 等 TB 建档与上线；3) 读 TB 遥测 p/loadType 与客户端属性 devType",
+   "expected": "注册成功；TB active；p≤0（受电为负）；遥测含 loadType=2；devType 属性为 load",
+   "result": "PASS",
+   "detail": "p=-0.21 kW, loadType=2, register=cert-exists+tb-registered",
+   "metrics": {
+    "capKw": 50,
+    "p": -0.21
+   },
+   "error": "",
+   "durationSec": 2.427
+  },
+  {
+   "id": "TC-IT-02",
+   "name": "devType=wind 风电设备创建/遥测（风速+三次方出力）",
+   "precondition": "模拟器与 TB 运行中",
+   "steps": "1) 创建 wind 设备；2) 等 TB 建档与上线；3) 读 TB 遥测 p/windSpeed",
+   "expected": "注册成功；TB active；p≥0（发电）；遥测含 windSpeed ∈[0,60] m/s",
+   "result": "PASS",
+   "detail": "p=0.0 kW, windSpeed=2.5 m/s",
+   "metrics": {
+    "capKw": 80,
+    "p": 0.0,
+    "windSpeed": 2.5
+   },
+   "error": "",
+   "durationSec": 2.206
+  },
+  {
+   "id": "TC-IT-03",
+   "name": "负荷特征配置：基线负荷率/占空启停生效",
+   "precondition": "load-it-01 已创建（TC-IT-01）",
+   "steps": "1) POST load-profile baseRatio=0.9；2) 轮询模拟器 status.curP 验证功率抬升；3) POST dutyOnMin=1 dutyOffMin=1 启用分钟级占空启停；4) 轮询 curP 出现 0（停运窗口）；5) 关闭占空恢复",
+   "expected": "配置回读一致；基线生效后 curP≈-0.9×cap；占空启用后 2 分钟内出现 curP=0",
+   "result": "PASS",
+   "detail": "基线 curP=-38.22 kW（预期≈-45±噪声）；占空停运观测到 curP=0",
+   "metrics": {
+    "baseP": -38.22,
+    "dutyZeroAt": -2.94
+   },
+   "error": "",
+   "durationSec": 177.749
+  },
+  {
+   "id": "TC-IT-04",
+   "name": "手动流程：创建不注册 → CSR 签发 → 导入证书 → 手动注册 → 上线",
+   "precondition": "模拟器与 TB 运行中；certmgr secrets 可写",
+   "steps": "1) 创建 dev-auto=false 设备（无证书）；2) openssl 生成外部密钥对+CSR；3) POST /api/certs/csr 签发（私钥不出外部）；4) POST /api/certs/import 导入证书+私钥；5) POST /api/devices/{name}/register 手动注册；6) 连接并等 TB active",
+   "expected": "创建返回 manual-pending 且不自动注册；导入校验通过；注册后 TB active",
+   "result": "PASS",
+   "detail": "导入 cn=load-man-it, O=VPP-Lab serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C91；注册 tb-registered",
+   "metrics": {},
+   "error": "",
+   "durationSec": 1.594
+  },
+  {
+   "id": "TC-IT-05",
+   "name": "日志数据方向（上行/下行）与原始报文记录",
+   "precondition": "load-it-01 在线且持续遥测（TC-IT-01 已执行）",
+   "steps": "1) 查询 direction=out 日志；2) 查询 direction=in 日志；3) 逐条校验 directionCN 与 raw；4) 解析 raw 为 JSON",
+   "expected": "上行记录 directionCN=上行且 raw 为合法 JSON；下行记录 raw 非空（M08 报文）",
+   "result": "PASS",
+   "detail": "上行 20 条/下行 1 条，raw 与 directionCN 全部符合",
+   "metrics": {
+    "outCount": 20,
+    "inCount": 1
+   },
+   "error": "",
+   "durationSec": 0.006
+  },
+  {
+   "id": "TC-IT-06",
+   "name": "devType/loadType 校验负例",
+   "precondition": "模拟器运行中",
+   "steps": "1) POST devType=flex（已废弃）；2) POST devType=load 且 loadType=0；3) load-profile 越界 baseRatio=1.5",
+   "expected": "全部 400，错误信息明确",
+   "result": "PASS",
+   "detail": "flex→{'detail': 'devType 必须为 pv|pcs|load|wind'}，loadType→{'detail': 'loadType 必须为 1~99（编码见 docs/01 §8.5）'}，baseRatio→{'detail': 'baseRatio 必须为 (0,1]'}",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.61
+  },
   {
    "id": "TC-C1-01",
    "name": "设备注册：证书签发与证书链校验",
@@ -21,10 +106,10 @@
    "steps": "POST /api/devices(autoRegister=true) → GET /api/certs/{name} → POST /api/certs/{name}/verify",
    "expected": "证书自动签发成功；openssl verify 返回 OK",
    "result": "PASS",
-   "detail": "签发+登记 313ms，serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C11，verify=/Users/wuchao/本地工作/thingsboard-dev/certmgr/secrets/devices/p6-c1-1793791452/cert.pem: OK",
+   "detail": "签发+登记 185ms，serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C92，verify=/Users/wuchao/本地工作/thingsboard-dev/certmgr/secrets/devices/p6-c1-1793807279/cert.pem: OK",
    "metrics": {},
    "error": "",
-   "durationSec": 0.875
+   "durationSec": 0.712
   },
   {
    "id": "TC-C1-02",
@@ -33,10 +118,10 @@
    "steps": "创建设备(autoRegister) → TB GET /api/tenant/devices?deviceName → GET credentials",
    "expected": "TB 中存在同名设备且 credentialsType=X509_CERTIFICATE，凭据值与设备证书一致（TB 3.5.1 以 base64(DER) 存储）",
    "result": "PASS",
-   "detail": "TB deviceId=435cc370-d842-11f1-afe7-ffd915cd9c6e, credentialsType=X509_CERTIFICATE, 凭据 DER 与签发证书一致",
+   "detail": "TB deviceId=1cc13050-d867-11f1-a0e3-811c6468b4a7, credentialsType=X509_CERTIFICATE, 凭据 DER 与签发证书一致",
    "metrics": {},
    "error": "",
-   "durationSec": 0.764
+   "durationSec": 0.65
   },
   {
    "id": "TC-C1-03",
@@ -45,10 +130,10 @@
    "steps": "再次 POST /api/devices 同名设备 → 对比证书 serial 与 TB deviceId",
    "expected": "复用已有证书（serial 不变）与同一 TB 设备，请求成功无报错",
    "result": "PASS",
-   "detail": "serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C13 不变，deviceId=43cdadb0… 不变（幂等复用）",
+   "detail": "serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C93 不变，deviceId=1d3045d0… 不变（幂等复用）",
    "metrics": {},
    "error": "",
-   "durationSec": 0.743
+   "durationSec": 0.729
   },
   {
    "id": "TC-C2-01",
@@ -60,7 +145,7 @@
    "detail": "TLS 握手成功 TLSv1.3",
    "metrics": {},
    "error": "",
-   "durationSec": 0.024
+   "durationSec": 0.012
   },
   {
    "id": "TC-C2-02",
@@ -72,7 +157,7 @@
    "detail": "握手 TLS 握手成功 TLSv1.3（WANT 模式实际行为，TLS 层不校验链）；CONNACK rc=2（身份验证失败，拒绝接入）",
    "metrics": {},
    "error": "",
-   "durationSec": 0.185
+   "durationSec": 0.213
   },
   {
    "id": "TC-C2-03",
@@ -96,7 +181,7 @@
    "detail": "模拟器 connected=false，TB active=false（inactivityTimeout=30s 实测约 38s 翻转）",
    "metrics": {},
    "error": "",
-   "durationSec": 46.94
+   "durationSec": 40.705
   },
   {
    "id": "TC-C3-02",
@@ -105,10 +190,10 @@
    "steps": "POST /api/devices/{name}/connect → 轮询 TB active=true → 观察心跳 hbSeq 增长",
    "expected": "TB active=true；心跳周期内 hbSeq 递增",
    "result": "PASS",
-   "detail": "TB active=true，hbSeq 3→4",
+   "detail": "TB active=true，hbSeq 2→3",
    "metrics": {},
    "error": "",
-   "durationSec": 31.404
+   "durationSec": 31.51
   },
   {
    "id": "TC-C3-03",
@@ -120,7 +205,7 @@
    "detail": "断线 15s 后自动重连成功，TB active=true（无需人工干预）",
    "metrics": {},
    "error": "",
-   "durationSec": 16.163
+   "durationSec": 16.243
   },
   {
    "id": "TC-C4-01",
@@ -129,10 +214,10 @@
    "steps": "等待 ≥2 个周期 → TB 历史库查询 4min 窗口 p 点",
    "expected": "≥2 条 p 点且 ts 均为整分（%60000==0），dqf∈[0,3]",
    "result": "PASS",
-   "detail": "4min 窗口 p=3 条整分对齐；latest p=0.0 s=0.0 dqf=0",
+   "detail": "4min 窗口 p=2 条整分对齐；latest p=0.0 s=0.0 dqf=0",
    "metrics": {},
    "error": "",
-   "durationSec": 0.05
+   "durationSec": 0.046
   },
   {
    "id": "TC-C4-02",
@@ -144,7 +229,7 @@
    "detail": "断线缓存 1 条，补传批次=1，M06 报文 1 条，TB 断线窗口 p=2 条（含恢复后新点）",
    "metrics": {},
    "error": "",
-   "durationSec": 132.183
+   "durationSec": 131.579
   },
   {
    "id": "TC-C4-03",
@@ -153,10 +238,10 @@
    "steps": "TB 历史库查询近 24h 窗口 e_exp_15",
    "expected": "存在 ≥1 条 15min 电能增量点，且 ts 整刻对齐（15min 边界）",
    "result": "PASS",
-   "detail": "24h 窗口 e_exp_15=80 条，最新 ts=1793705400000 整刻对齐",
+   "detail": "24h 窗口 e_exp_15=67 条，最新 ts=1793721600000 整刻对齐",
    "metrics": {},
    "error": "",
-   "durationSec": 0.042
+   "durationSec": 0.024
   },
   {
    "id": "TC-C5-01",
@@ -165,10 +250,10 @@
    "steps": "TB SHARED_SCOPE 下发 {cfgVer, hbPeriodSec, tele15mEnable} → 轮询 CLIENT_SCOPE 的 cfgVerApplied/cfgResult",
    "expected": "cfgVerApplied==cfgVer 且 cfgResult==0（设备已应用）",
    "result": "PASS",
-   "detail": "cfgVer=92681 已应用：cfgVerApplied=92681, cfgResult=0, hbPeriod→30s",
+   "detail": "cfgVer=8502 已应用：cfgVerApplied=8502, cfgResult=0, hbPeriod→30s",
    "metrics": {},
    "error": "",
-   "durationSec": 1.065
+   "durationSec": 1.057
   },
   {
    "id": "TC-C5-02",
@@ -177,10 +262,10 @@
    "steps": "以相同 cfgVer 再次下发 → 轮询 CLIENT_SCOPE cfgResult",
    "expected": "cfgResult=1002（配置版本重复，拒绝应用）",
    "result": "PASS",
-   "detail": "重复 cfgVer=92681 → cfgResult=1002（拒绝）",
+   "detail": "重复 cfgVer=8502 → cfgResult=1002（拒绝）",
    "metrics": {},
    "error": "",
-   "durationSec": 1.071
+   "durationSec": 1.069
   },
   {
    "id": "TC-C5-03",
@@ -189,10 +274,10 @@
    "steps": "TB GET attributes/SHARED_SCOPE 回读",
    "expected": "cfgVer/hbPeriodSec/tele15mEnable 与下发值一致",
    "result": "PASS",
-   "detail": "SHARED_SCOPE 回读一致：cfgVer=92681, hbPeriodSec=30, tele15mEnable=True",
+   "detail": "SHARED_SCOPE 回读一致：cfgVer=8502, hbPeriodSec=30, tele15mEnable=True",
    "metrics": {},
    "error": "",
-   "durationSec": 0.018
+   "durationSec": 0.021
   },
   {
    "id": "TC-C6-01",
@@ -201,10 +286,10 @@
    "steps": "two-way RPC readRealtimeData → 校验响应 → 轮询 TB latest p 的 ts 前移",
    "expected": "响应 state=SUCCESS errCode=0 且含 p 实时值；召测数据入库 TB",
    "result": "PASS",
-   "detail": "SUCCESS p=0.0，TB p ts 1793791680000→已更新（M05 入库）",
+   "detail": "SUCCESS p=0.0，TB p ts 1793807460000→已更新（M05 入库）",
    "metrics": {},
    "error": "",
-   "durationSec": 1.159
+   "durationSec": 1.004
   },
   {
    "id": "TC-C6-02",
@@ -213,10 +298,10 @@
    "steps": "下发目标功率 55kW → 响应应为 ACK → 轮询台账终态与平台 cmdState → 轮询 TB p 遥测到位 55±1.5",
    "expected": "受理 ACK；终态 SUCCESS；actualP 上报；TB p 爬坡到目标值（±1.5）",
    "result": "PASS",
-   "detail": "ACK→SUCCESS，actualP=54.6，平台 cmdState=SUCCESS，TB p 到位 55.0",
+   "detail": "ACK→SUCCESS，actualP=54.5，平台 cmdState=SUCCESS，TB p 到位 55.0",
    "metrics": {},
    "error": "",
-   "durationSec": 118.645
+   "durationSec": 76.763
   },
   {
    "id": "TC-C6-03",
@@ -225,10 +310,10 @@
    "steps": "下发 expireAt=issuedAt-1000（已过期）的 setActivePowerTarget",
    "expected": "state=REJECTED errCode=2004（指令已过期）",
    "result": "PASS",
-   "detail": "REJECTED errCode=2004（cmdId=p6-exp-1793791803818）",
+   "detail": "REJECTED errCode=2004（cmdId=p6-exp-1793807582806）",
    "metrics": {},
    "error": "",
-   "durationSec": 0.127
+   "durationSec": 0.807
   },
   {
    "id": "TC-C6-04",
@@ -237,10 +322,10 @@
    "steps": "以相同 cmdId 重发指令 → 对比台账记录",
    "expected": "返回原执行结果且 dup=true，台账仅一条记录",
    "result": "PASS",
-   "detail": "cmdId=p6-pt-1793791685168 重发 → dup=true，台账仍 1 条（幂等命中）",
+   "detail": "cmdId=p6-pt-1793807506039 重发 → dup=true，台账仍 1 条（幂等命中）",
    "metrics": {},
    "error": "",
-   "durationSec": 1.142
+   "durationSec": 1.121
   },
   {
    "id": "TC-C7-01",
@@ -249,10 +334,10 @@
    "steps": "注入 failCmd(count=1) → 下发 setActivePowerTarget → 轮询台账终态与平台 cmdState",
    "expected": "终态 FAILED errCode=2003；平台侧 cmdState=FAILED 同步可见",
    "result": "PASS",
-   "detail": "FAILED errCode=2003 双端一致（台账+平台 cmdState ts>1793791805091）",
+   "detail": "FAILED errCode=2003 双端一致（台账+平台 cmdState ts>1793807584736）",
    "metrics": {},
    "error": "",
-   "durationSec": 1.072
+   "durationSec": 1.1
   },
   {
    "id": "TC-C7-02",
@@ -261,10 +346,10 @@
    "steps": "注入 rejectCmd(count=1) → 下发 setActivePowerTarget",
    "expected": "state=REJECTED errCode=2003（设备运行条件不满足拒绝受理）",
    "result": "PASS",
-   "detail": "REJECTED errCode=2003（cmdId=p6-rej-1793791806162）",
+   "detail": "REJECTED errCode=2003（cmdId=p6-rej-1793807585835）",
    "metrics": {},
    "error": "",
-   "durationSec": 0.837
+   "durationSec": 0.792
   },
   {
    "id": "TC-C8-01",
@@ -276,7 +361,7 @@
    "detail": "坏 JSON 触发 TB 断链一次；自动重连后 70s 稳定在线（在途队列已防御性清空）",
    "metrics": {},
    "error": "",
-   "durationSec": 128.613
+   "durationSec": 128.556
   },
   {
    "id": "TC-C8-02",
@@ -288,7 +373,7 @@
    "detail": "缺字段上报 2 条（ts 无 p 入库），链路保持在线",
    "metrics": {},
    "error": "",
-   "durationSec": 130.07
+   "durationSec": 130.046
   },
   {
    "id": "TC-C8-03",
@@ -300,7 +385,7 @@
    "detail": "越界点 99999 如实入库（平台无业务校验，已记录为实际行为）；注入结束后恢复 0~capKw 正常曲线值",
    "metrics": {},
    "error": "",
-   "durationSec": 167.812
+   "durationSec": 167.783
   },
   {
    "id": "TC-C8-04",
@@ -309,10 +394,10 @@
    "steps": "注入 duplicate(count=1)+delay(300ms, 90s) → 观察 2 个周期 → 核实 TB latest p 更新且设备保持在线",
    "expected": "重复报文不引发错误（同 ts 末写胜出）；链路保持在线，latest 持续更新",
    "result": "PASS",
-   "detail": "重复+延迟注入期间 latest p 持续更新（ts→1793792280000），设备保持在线",
+   "detail": "重复+延迟注入期间 latest p 持续更新（ts→1793808060000），设备保持在线",
    "metrics": {},
    "error": "",
-   "durationSec": 49.443
+   "durationSec": 50.338
   },
   {
    "id": "TC-C9-01(S=1)",
@@ -321,13 +406,13 @@
    "steps": "串行 POST /api/devices ×1（autoRegister+autoConnect）→ 轮询模拟器注册完成",
    "expected": "成功率 100%，记录创建耗时",
    "result": "PASS",
-   "detail": "创建+签发+TB 注册 1/1 成功（100%），耗时 0.1s（均 131ms/台）",
+   "detail": "创建+签发+TB 注册 1/1 成功（100%），耗时 0.1s（均 141ms/台）",
    "metrics": {
     "createOk": 1,
     "createSec": 0.1
    },
    "error": "",
-   "durationSec": 0.144
+   "durationSec": 0.161
   },
   {
    "id": "TC-C9-02(S=1)",
@@ -341,7 +426,7 @@
     "onlineSec": 1.0
    },
    "error": "",
-   "durationSec": 1.043
+   "durationSec": 1.025
   },
   {
    "id": "TC-C9-03(S=1)",
@@ -353,7 +438,7 @@
    "detail": "TB latest p 可见 1/1（100%）",
    "metrics": {},
    "error": "",
-   "durationSec": 0.017
+   "durationSec": 0.016
   },
   {
    "id": "TC-C9-04(S=1)",
@@ -362,16 +447,16 @@
    "steps": "线程池(10) 并发 two-way RPC ×1 → 统计 SUCCESS 率与 RTT 分布",
    "expected": "成功率 100%，记录 RTT min/avg/p95/max",
    "result": "PASS",
-   "detail": "SUCCESS 1/1（100%），RTT min=1.29s avg=1.29s p95=1.29s max=1.29s",
+   "detail": "SUCCESS 1/1（100%），RTT min=1.31s avg=1.31s p95=1.31s max=1.31s",
    "metrics": {
     "rpcOk": 1,
-    "rttMin": 1.29,
-    "rttAvg": 1.29,
-    "rttP95": 1.29,
-    "rttMax": 1.29
+    "rttMin": 1.31,
+    "rttAvg": 1.31,
+    "rttP95": 1.31,
+    "rttMax": 1.31
    },
    "error": "",
-   "durationSec": 1.295
+   "durationSec": 1.32
   },
   {
    "id": "TC-C9-05(S=1)",
@@ -383,7 +468,7 @@
    "detail": "已清理 1 台（模拟器+TB 均无残留）",
    "metrics": {},
    "error": "",
-   "durationSec": 0.517
+   "durationSec": 0.531
   }
  ]
 }
