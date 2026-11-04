@@ -1,0 +1,10 @@
+# 模拟器镜像构建上下文裁剪（上下文=仓库根目录，仅保留 certmgr 与 simulator 源码）
+*
+!certmgr/
+!simulator/
+# 证书私钥与已签发证书不进镜像（运行期以卷挂载）
+certmgr/secrets/
+# 缓存与产物
+**/__pycache__
+**/*.pyc
+simulator/frontend/node_modules/

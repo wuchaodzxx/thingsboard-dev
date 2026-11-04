@@ -46,12 +46,14 @@ def _dev_id(tb, device: str) -> str:
 def verify_devices():
     tb = _tb()
     out = []
-    for d in tb._req("GET", "/tenant/devices", params={"pageSize": 100, "page": 0})["data"]:
+    for d in tb._req("GET", "/api/tenant/devices", params={"pageSize": 100, "page": 0})["data"]:
         did = d["id"]["id"]
+        # 本 TB 版本列表/详情接口均不含 active，仅 /api/device/info/{id} 返回
+        active = tb._req("GET", f"/api/device/info/{did}").get("active")
         out.append({
             "name": d["name"],
             "devType": d.get("type"),
-            "active": d.get("active"),                       # TB 侧在线状态
+            "active": active,                                # TB 侧在线状态
             "credentialsType": tb.get_credentials(did)["credentialsType"],  # X509_CERTIFICATE=双向TLS
             "createdTs": d.get("createdTs"),
             "deviceId": did,

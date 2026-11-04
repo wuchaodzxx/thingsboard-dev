@@ -181,17 +181,40 @@ class DeviceSim:
             self._pending_disconnect = True  # 由 worker 线程执行断开（socket 写单线程化）
             LOGS.add(device=self.cfg.name, direction="evt", result="offline", error=reason)
 
+    def _hard_close(self):
+        """flush 队列中的 DISCONNECT 包并确保底层 socket 关闭。
+
+        paho 1.6.1 的 disconnect() 仅入队 DISCONNECT 包并置状态，socket 的
+        关闭发生在 _packet_write 写完该包之后；若线程随即退出或不再调 loop，
+        包滞留、socket 泄漏，服务端会话不注销（TB active 恒为 true）。
+        必须用 paho 自己的 _sock_close() 清空其内部 _sock 引用：若仅裸 close
+        底层 socket，paho 仍持已关闭的 SSL 对象，下次 loop() 在 _sock.pending()
+        处持续抛异常（该调用位于 select 异常保护之外），设备将永久静默。"""
+        try:
+            for _ in range(6):               # flush DISCONNECT（写完即关 socket）
+                self.cli.loop(0.05)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.cli._sock_close()           # 关闭并清空 paho 内部引用
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            s = self.cli.socket()
+            if s is not None:
+                s.close()                    # 兜底：任何残留 socket 一律关闭
+        except Exception:  # noqa: BLE001
+            pass
+
     def shutdown(self):
         self._stop_flag = True
         self._want_connect = False
         self._pending_disconnect = True
         if self._thread is not threading.current_thread():
             self._thread.join(timeout=3.0)  # 等 worker 结束最后的网络收发
-        try:
+        if self.connected:
             self.cli.disconnect()
-            self.cli.loop_stop()
-        except Exception:  # noqa: BLE001
-            pass
+            self._hard_close()
 
     def status(self) -> dict:
         return {
@@ -347,7 +370,8 @@ class DeviceSim:
         self._tx_queue.put((topic, body, qos))
         self.sent_count += 1
         LOGS.add(device=self.cfg.name, direction="out", topic=topic, qos=qos,
-                 msg_type=msg_type, cmd_id=cmd_id, payload=payload, result="sent")
+                 msg_type=msg_type, cmd_id=cmd_id, payload=sent_payload,
+                 result="sent")
         if f["dupRemaining"] > 0 and is_data_tele:
             f["dupRemaining"] -= 1
             self._tx_queue.put((topic, body, qos))
@@ -377,12 +401,28 @@ class DeviceSim:
             try:
                 now_ms = int(time.time() * 1000)
                 now = time.time()
-                self.cli.loop(0.0)  # 自管网络循环：CONNACK/PUBLISH 下行/PINGRESP
-                self._flush_tx()    # socket 写只在 worker 线程发生（含 publish/断开）
+                # 网络收发单独隔离：paho 1.6.1 在 _sock.pending()（select 异常
+                # 保护之外）可能因内部引用失效持续抛错，若与下方逻辑共用 try
+                # 会导致跳过重连/遥测、设备永久静默；此处强制复位传输层后，
+                # 下方重连逻辑在同一 tick 内重建连接。
+                try:
+                    self.cli.loop(0.0)  # 自管网络循环：CONNACK/PUBLISH 下行/PINGRESP
+                    self._flush_tx()    # socket 写只在 worker 线程发生（含 publish/断开）
+                except Exception as e:  # noqa: BLE001
+                    try:
+                        self.cli._sock_close()   # 复位传输层（关闭并清空 paho 内部引用）
+                    except Exception:  # noqa: BLE001
+                        pass
+                    if self.connected:
+                        self.connected = False
+                        self._next_retry_ts = now + 1.0
+                        LOGS.add(device=self.cfg.name, direction="evt", result="offline",
+                                 error=f"网络循环异常复位: {type(e).__name__}: {e}")
                 # 1) 断线注入 / 手动断开（延迟到本线程执行）/ 重连管理
                 if self.connected and (self._pending_disconnect
                                        or self.fault["disconnectUntil"] > now):
                     self.cli.disconnect()
+                    self._hard_close()
                 self._pending_disconnect = False
                 if self._want_connect and not self.connected and not self._user_disconnected \
                         and now >= self._next_retry_ts:

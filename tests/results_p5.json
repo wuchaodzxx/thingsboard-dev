@@ -1,0 +1,54 @@
+{
+ "ts": 1793710143533,
+ "results": [
+  {
+   "id": "P5-01",
+   "name": "设备注册/连接/认证状态",
+   "result": "PASS",
+   "detail": "pv-1001/pcs-1001: active=true, credentialsType=X509_CERTIFICATE, type=pv/pcs",
+   "elapsedMs": 271
+  },
+  {
+   "id": "P5-02",
+   "name": "最新遥测与历史数据查询",
+   "result": "PASS",
+   "detail": "PV latest p/s/dqf 齐全, 5min 历史 p=5 条(整分对齐), PCS soc=43.99",
+   "elapsedMs": 258
+  },
+  {
+   "id": "P5-03",
+   "name": "共享属性下发与应用验证",
+   "result": "PASS",
+   "detail": "cfgVer=2 已应用: cfgVerApplied=2, cfgResult=0, hbPeriod→30s",
+   "elapsedMs": 1390
+  },
+  {
+   "id": "P5-04",
+   "name": "数据召测(readRealtimeData)",
+   "result": "PASS",
+   "detail": "SUCCESS p=30.0, TB p ts 1793710020000→更新",
+   "elapsedMs": 824
+  },
+  {
+   "id": "P5-05",
+   "name": "远程控制指令下发(ACK)",
+   "result": "PASS",
+   "detail": "cmdId=v5-pt-1793710058212 state=ACK (受理)",
+   "elapsedMs": 885
+  },
+  {
+   "id": "P5-06",
+   "name": "指令响应与执行数据核验",
+   "result": "PASS",
+   "detail": "cmdState=SUCCESS(ts>1793710059097), actualP=59.5, TB p=60.0",
+   "elapsedMs": 84341
+  },
+  {
+   "id": "P5-07",
+   "name": "发送/接收数据完整性比对",
+   "result": "PASS",
+   "detail": "M03 窗口300s: sent=5 matched=5 missing=0 mismatch=0 → PASS",
+   "elapsedMs": 94
+  }
+ ]
+}

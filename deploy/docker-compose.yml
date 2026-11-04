@@ -18,9 +18,15 @@ services:
     image: ${TB_IMAGE:-thingsboard/tb-postgres:3.5.1}
     container_name: vpp-thingsboard
     restart: unless-stopped
+    # 别名 tb：与 MQTT 服务器证书 SAN（DNS:localhost, DNS:tb, IP:127.0.0.1）匹配，
+    # 供容器内模拟器以 tb:8883 接入（paho 默认校验主机名）
+    networks:
+      default:
+        aliases:
+          - tb
     ports:
       - "${TB_HTTP_PORT:-18080}:9090"
-      - "${MQTTS_PORT:-18883}:8883"
+      - "${MQTTS_PORT:-18885}:8883"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       # ---- JVM ----
@@ -54,6 +60,39 @@ services:
       retries: 10
       start_period: 300s
     stop_grace_period: 1m
+
+  # ---- 设备模拟器（可选服务，profile=simulator）----
+  # 默认不启动（docker compose up -d 仅起 TB）；容器化运行模拟器：
+  #   docker compose --profile simulator up -d --build
+  # 宿主机直跑方式见 docs/04 §2（两种方式二选一，均占用对外 19000）
+  simulator:
+    build:
+      context: ..
+      dockerfile: deploy/simulator.Dockerfile
+    image: ${SIM_IMAGE:-vpp-simulator:1.0.0}
+    container_name: vpp-simulator
+    profiles: ["simulator"]
+    restart: unless-stopped
+    depends_on:
+      thingsboard:
+        condition: service_healthy
+    ports:
+      - "${SIM_HTTP_PORT:-19000}:9000"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # MQTT 经容器网络直连 TB（别名 tb，容器端口 8883；SAN 含 DNS:tb）
+      SIM_MQTT_HOST: tb
+      SIM_MQTT_PORT: "8883"
+      # certmgr 注册设备走 TB REST（容器内 9090）
+      TB_URL: http://thingsboard:9090
+    volumes:
+      # 设备证书签发/读取（certapi 读写 secrets；与宿主机直跑共用同一证书目录）
+      - ../certmgr/secrets:/workspace/certmgr/secrets
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   tb-data:

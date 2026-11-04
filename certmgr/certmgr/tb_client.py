@@ -70,14 +70,17 @@ class TBClient:
                 return None
             raise
 
-    def get_device_by_id(self, device_id: str) -> dict:
-        """按 id 查设备详情（/api/device/{id} 含 active 在线标志，列表接口不含）。"""
-        return self._req("GET", f"/api/device/{device_id}")
+    def get_device_info(self, device_id: str) -> dict:
+        """设备详情（含 active 在线标志；本 TB 版本 /api/device/{id} 与列表接口均不含）。"""
+        return self._req("GET", f"/api/device/info/{device_id}")
 
     def create_device(self, name: str, dev_type: str = "default") -> dict:
         # 3.5.1：按 type 创建设备，平台自动 findOrCreate 同名设备配置档案（实测验证）
         body: dict = {"name": name, "type": dev_type}
         return self._req("POST", "/api/device", json=body)
+
+    def delete_device(self, device_id: str) -> None:
+        self._req("DELETE", f"/api/device/{device_id}")
 
     # ---------- credentials ----------
     def get_credentials(self, device_id: str) -> dict:

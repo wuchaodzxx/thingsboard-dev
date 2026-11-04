@@ -60,8 +60,8 @@ class PKI:
         org: str = DEF_ORG,
         root_cn: str = DEF_ROOT_CN,
         int_cn: str = DEF_INT_CN,
-        days_root: int = 3650,
-        days_int: int = 1825,
+        days_root: int = 7300,
+        days_int: int = 7300,
         force: bool = False,
     ) -> dict:
         root_cert = self.root_dir / "ca.pem"
@@ -99,7 +99,7 @@ class PKI:
 
     # ---------- 服务器证书 ----------
     def issue_server_cert(
-        self, out_dir: Path, name: str = "server", days: int = 825,
+        self, out_dir: Path, name: str = "server", days: int = 7300,
         dns: list[str] | None = None, ips: list[str] | None = None,
         org: str = DEF_ORG,
     ) -> dict:
@@ -122,7 +122,7 @@ class PKI:
         return {"cert": str(cert), "key": str(key), "fullchain": str(fullchain)}
 
     # ---------- 设备证书 ----------
-    def issue_device_cert(self, name: str, days: int = 365, org: str = DEF_ORG,
+    def issue_device_cert(self, name: str, days: int = 7300, org: str = DEF_ORG,
                           out_dir: Path | None = None) -> dict:
         ca = self.ca_paths()
         d = Path(out_dir) if out_dir else self.dev_dir / name
@@ -138,7 +138,7 @@ class PKI:
         return {"name": name, "cert": str(cert), "key": str(key),
                 "fullchain": str(fullchain), "dir": str(d)}
 
-    def sign_external_csr(self, csr: Path, name: str, days: int = 365,
+    def sign_external_csr(self, csr: Path, name: str, days: int = 7300,
                           out_dir: Path | None = None) -> dict:
         """厂家自带密钥对与 CSR：只签发证书，私钥不出厂家环境。"""
         ca = self.ca_paths()

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>P6 自动化测试报告</title>
+<style>
+ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+      margin:24px;color:#1f2937;background:#f8fafc}
+ h1{font-size:22px} h2{font-size:17px;margin-top:28px;border-left:4px solid #2563eb;padding-left:8px}
+ .cards{display:flex;gap:12px;margin:16px 0}
+ .card{flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:10px;
+       padding:14px 18px;text-align:center}
+ .card b{display:block;font-size:26px} .card span{color:#6b7280;font-size:12px}
+ table{border-collapse:collapse;width:100%;background:#fff;font-size:13px;
+       border:1px solid #e5e7eb}
+ th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left;vertical-align:top}
+ th{background:#f1f5f9} td.num{text-align:right}
+ .badge{padding:1px 8px;border-radius:10px;font-size:12px;color:#fff}
+ .badge.ok{background:#16a34a} .badge.bad{background:#dc2626}
+ .badge.skip{background:#d97706}
+ tr.ok td:nth-child(7){} .small{font-size:12px;color:#475569}
+ .meta{color:#6b7280;font-size:13px}
+</style></head><body>
+<h1>P6 自动化测试报告（虚拟电厂物联接入）</h1>
+<p class="meta">生成时间：2026-11-04 20:12:44 ｜ 测试对象：ThingsBoard CE 3.5.1
+（MQTT mTLS :18885 / REST :18080）+ 设备模拟器 :19000 ｜ 判定基准：平台实际存储回读</p>
+<div class="cards">
+ <div class="card"><b style="color:#2563eb">40</b><span>总用例（含 3 个规模轮次）</span></div>
+ <div class="card"><b style="color:#16a34a">40</b><span>通过</span></div>
+ <div class="card"><b style="color:#dc2626">0</b><span>失败</span></div>
+ <div class="card"><b style="color:#7c3aed">3</b><span>执行轮次（--scale 1/10/100）</span></div>
+</div>
+
+<h2>一、硬件与环境条件</h2>
+<table><tbody><tr><td>主机名</td><td>MacBook-Air-8.local</td></tr><tr><td>操作系统</td><td>macOS-27.2-arm64-arm-64bit</td></tr><tr><td>架构</td><td>arm64</td></tr><tr><td>CPU 逻辑核</td><td>10</td></tr><tr><td>内存 (MB)</td><td>16384</td></tr><tr><td>Python</td><td>3.12.7</td></tr><tr><td>ThingsBoard</td><td>3.5.1</td></tr><tr><td>模拟器运行时长 (s)</td><td>1278</td></tr></tbody></table>
+
+<h2>二、功能用例明细（前置条件 / 步骤 / 预期 / 实际结果）</h2>
+<table><thead><tr><th>编号</th><th>用例</th><th>前置条件</th><th>操作步骤</th>
+<th>预期结果</th><th>实际结果</th><th>结论</th><th>耗时</th></tr></thead>
+<tbody>
+
+<tr class="ok">
+ <td>TC-C1-01</td><td>设备注册：证书签发与证书链校验</td>
+ <td class="small">TB/模拟器运行中，root+intermediate CA 已初始化</td>
+ <td class="small">POST /api/devices(autoRegister=true) → GET /api/certs/{name} → POST /api/certs/{name}/verify</td>
+ <td class="small">证书自动签发成功；openssl verify 返回 OK</td>
+ <td class="small">签发+登记 313ms，serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C11，verify=/Users/wuchao/本地工作/thingsboard-dev/certmgr/secrets/devices/p6-c1-1793791452/cert.pem: OK</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.9s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C1-02</td><td>设备注册：TB 注册与 X.509 凭据绑定</td>
+ <td class="small">同 TC-C1-01</td>
+ <td class="small">创建设备(autoRegister) → TB GET /api/tenant/devices?deviceName → GET credentials</td>
+ <td class="small">TB 中存在同名设备且 credentialsType=X509_CERTIFICATE，凭据值与设备证书一致（TB 3.5.1 以 base64(DER) 存储）</td>
+ <td class="small">TB deviceId=435cc370-d842-11f1-afe7-ffd915cd9c6e, credentialsType=X509_CERTIFICATE, 凭据 DER 与签发证书一致</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.8s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C1-03</td><td>设备注册：重复创建幂等性</td>
+ <td class="small">同 TC-C1-01，且该设备已注册一次</td>
+ <td class="small">再次 POST /api/devices 同名设备 → 对比证书 serial 与 TB deviceId</td>
+ <td class="small">复用已有证书（serial 不变）与同一 TB 设备，请求成功无报错</td>
+ <td class="small">serial=6D8CF8E8AB50BBC5656C0DCA19E1F29C79496C13 不变，deviceId=43cdadb0… 不变（幂等复用）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.7s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C2-01</td><td>X.509 双向 TLS：合法证书接入成功</td>
+ <td class="small">TB :18885 监听中；pv-1001 持有链内证书</td>
+ <td class="small">ssl 握手：client=cert.pem，CA=ca-chain.pem</td>
+ <td class="small">握手成功（TLSv1.2/1.3）</td>
+ <td class="small">TLS 握手成功 TLSv1.3</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.0s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C2-02</td><td>X.509 双向 TLS：非信任 CA 证书无法完成接入</td>
+ <td class="small">同 TC-C2-01</td>
+ <td class="small">openssl 现场生成 rogue 根 CA 并签发设备证书 → 携该证书握手 → 发送 MQTT CONNECT → 观察平台响应</td>
+ <td class="small">rogue 证书设备无法完成接入：CONNECT 被拒（CONNACK rc≠0）或连接被关闭</td>
+ <td class="small">握手 TLS 握手成功 TLSv1.3（WANT 模式实际行为，TLS 层不校验链）；CONNACK rc=2（身份验证失败，拒绝接入）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.2s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C2-03</td><td>X.509 双向 TLS：无客户端证书接入被拒绝</td>
+ <td class="small">同 TC-C2-01</td>
+ <td class="small">ssl 握手不加载客户端证书（TB WANT 模式，握手可建立）→ 发送无认证凭据的 MQTT CONNECT → 观察平台响应</td>
+ <td class="small">无证书设备无法完成接入：CONNECT 被拒（CONNACK rc≠0）或连接被关闭</td>
+ <td class="small">握手 TLS 握手成功 TLSv1.3（WANT 模式实际行为）；CONNACK rc=2（身份验证失败，拒绝接入）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.0s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C3-01</td><td>上下线：主动断开下线</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">POST attributes(SERVER_SCOPE) inactivityTimeout=30000 → POST /api/devices/{name}/disconnect → 轮询 TB /api/device/info/{id}.active</td>
+ <td class="small">设备离线；TB 会话注销后于超时+检查周期（30~90s）内 active=false</td>
+ <td class="small">模拟器 connected=false，TB active=false（inactivityTimeout=30s 实测约 38s 翻转）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">46.9s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C3-02</td><td>上下线：重连上线与心跳恢复</td>
+ <td class="small">TC-C3-01 完成后设备处于离线态</td>
+ <td class="small">POST /api/devices/{name}/connect → 轮询 TB active=true → 观察心跳 hbSeq 增长</td>
+ <td class="small">TB active=true；心跳周期内 hbSeq 递增</td>
+ <td class="small">TB active=true，hbSeq 3→4</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">31.4s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C3-03</td><td>上下线：异常断线自动重连</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 disconnect(15s) → 等待注入结束 → 轮询模拟器 connected 与 TB active</td>
+ <td class="small">断线期间离线；注入结束后无需人工干预自动重连，TB active=true</td>
+ <td class="small">断线 15s 后自动重连成功，TB active=true（无需人工干预）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">16.2s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C4-01</td><td>数据上报：1min 周期遥测入库</td>
+ <td class="small">pv-1001 在线，1min 遥测周期</td>
+ <td class="small">等待 ≥2 个周期 → TB 历史库查询 4min 窗口 p 点</td>
+ <td class="small">≥2 条 p 点且 ts 均为整分（%60000==0），dqf∈[0,3]</td>
+ <td class="small">4min 窗口 p=3 条整分对齐；latest p=0.0 s=0.0 dqf=0</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C4-02</td><td>数据上报：断线缓存与历史补传</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 disconnect(130s) → 轮询 cacheCount&gt;0 → 恢复后等待补传完成 → TB 历史库核实断线窗口内的点</td>
+ <td class="small">断线期间缓存 ≥1 条；恢复后自动补传（M06）；TB 窗口内可查到补传点</td>
+ <td class="small">断线缓存 1 条，补传批次=1，M06 报文 1 条，TB 断线窗口 p=2 条（含恢复后新点）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">132.2s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C4-03</td><td>数据上报：15min 电能结算入库核实</td>
+ <td class="small">系统已运行跨越 15min 整刻（含历史数据）</td>
+ <td class="small">TB 历史库查询近 24h 窗口 e_exp_15</td>
+ <td class="small">存在 ≥1 条 15min 电能增量点，且 ts 整刻对齐（15min 边界）</td>
+ <td class="small">24h 窗口 e_exp_15=80 条，最新 ts=1793705400000 整刻对齐</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.0s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C5-01</td><td>属性：共享属性下发与应用回执</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">TB SHARED_SCOPE 下发 {cfgVer, hbPeriodSec, tele15mEnable} → 轮询 CLIENT_SCOPE 的 cfgVerApplied/cfgResult</td>
+ <td class="small">cfgVerApplied==cfgVer 且 cfgResult==0（设备已应用）</td>
+ <td class="small">cfgVer=92681 已应用：cfgVerApplied=92681, cfgResult=0, hbPeriod→30s</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C5-02</td><td>属性：重复配置版本拒绝</td>
+ <td class="small">TC-C5-01 已下发 cfgVer=V 且应用成功</td>
+ <td class="small">以相同 cfgVer 再次下发 → 轮询 CLIENT_SCOPE cfgResult</td>
+ <td class="small">cfgResult=1002（配置版本重复，拒绝应用）</td>
+ <td class="small">重复 cfgVer=92681 → cfgResult=1002（拒绝）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C5-03</td><td>属性：平台侧共享属性查询</td>
+ <td class="small">TC-C5-01 已下发属性</td>
+ <td class="small">TB GET attributes/SHARED_SCOPE 回读</td>
+ <td class="small">cfgVer/hbPeriodSec/tele15mEnable 与下发值一致</td>
+ <td class="small">SHARED_SCOPE 回读一致：cfgVer=92681, hbPeriodSec=30, tele15mEnable=True</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.0s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C6-01</td><td>召测：readRealtimeData 数据召测</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">two-way RPC readRealtimeData → 校验响应 → 轮询 TB latest p 的 ts 前移</td>
+ <td class="small">响应 state=SUCCESS errCode=0 且含 p 实时值；召测数据入库 TB</td>
+ <td class="small">SUCCESS p=0.0，TB p ts 1793791680000→已更新（M05 入库）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.2s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C6-02</td><td>远程控制：setActivePowerTarget 执行闭环</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">下发目标功率 55kW → 响应应为 ACK → 轮询台账终态与平台 cmdState → 轮询 TB p 遥测到位 55±1.5</td>
+ <td class="small">受理 ACK；终态 SUCCESS；actualP 上报；TB p 爬坡到目标值（±1.5）</td>
+ <td class="small">ACK→SUCCESS，actualP=54.6，平台 cmdState=SUCCESS，TB p 到位 55.0</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">118.6s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C6-03</td><td>指令闭环：过期指令拒绝</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">下发 expireAt=issuedAt-1000（已过期）的 setActivePowerTarget</td>
+ <td class="small">state=REJECTED errCode=2004（指令已过期）</td>
+ <td class="small">REJECTED errCode=2004（cmdId=p6-exp-1793791803818）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C6-04</td><td>指令闭环：重复指令幂等处理</td>
+ <td class="small">pv-1001 在线；使用 TC-C6-02 已执行成功的 cmdId</td>
+ <td class="small">以相同 cmdId 重发指令 → 对比台账记录</td>
+ <td class="small">返回原执行结果且 dup=true，台账仅一条记录</td>
+ <td class="small">cmdId=p6-pt-1793791685168 重发 → dup=true，台账仍 1 条（幂等命中）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C7-01</td><td>指令闭环：执行失败 FAILED 上报</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 failCmd(count=1) → 下发 setActivePowerTarget → 轮询台账终态与平台 cmdState</td>
+ <td class="small">终态 FAILED errCode=2003；平台侧 cmdState=FAILED 同步可见</td>
+ <td class="small">FAILED errCode=2003 双端一致（台账+平台 cmdState ts&gt;1793791805091）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C7-02</td><td>指令闭环：设备拒绝 REJECTED 上报</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 rejectCmd(count=1) → 下发 setActivePowerTarget</td>
+ <td class="small">state=REJECTED errCode=2003（设备运行条件不满足拒绝受理）</td>
+ <td class="small">REJECTED errCode=2003（cmdId=p6-rej-1793791806162）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.8s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C8-01</td><td>异常报文：坏 JSON 断链与自动恢复</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 badJson(count=1) → 等待 1min 遥测携带坏报文 → 观察断链 → 注入结束后轮询自动重连</td>
+ <td class="small">TB 主动断链（设备离线）；恢复后自动重连且 TB active=true，不再反复断链</td>
+ <td class="small">坏 JSON 触发 TB 断链一次；自动重连后 70s 稳定在线（在途队列已防御性清空）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">128.6s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C8-02</td><td>异常报文：缺字段遥测处理</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 missingField(count=2, field=p) → 等待注入点上报 → 比对日志 ts 与 TB 历史库</td>
+ <td class="small">被删字段的 ts 在 TB 无 p 记录（平台如实存储缺失态），链路不断开</td>
+ <td class="small">缺字段上报 2 条（ts 无 p 入库），链路保持在线</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">130.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C8-03</td><td>异常报文：越界数值入库（平台实际行为）</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 outOfRange(count=2, p=99999) → 等待注入点上报 → TB 历史库核实 99999 点存在</td>
+ <td class="small">越界点入库（本 TB 版本无业务值校验，实际行为=如实存储）；注入结束后恢复正常值</td>
+ <td class="small">越界点 99999 如实入库（平台无业务校验，已记录为实际行为）；注入结束后恢复 0~capKw 正常曲线值</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">167.8s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C8-04</td><td>通信异常：重复/延迟报文接收</td>
+ <td class="small">pv-1001 在线</td>
+ <td class="small">注入 duplicate(count=1)+delay(300ms, 90s) → 观察 2 个周期 → 核实 TB latest p 更新且设备保持在线</td>
+ <td class="small">重复报文不引发错误（同 ts 末写胜出）；链路保持在线，latest 持续更新</td>
+ <td class="small">重复+延迟注入期间 latest p 持续更新（ts→1793792280000），设备保持在线</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">49.4s</td>
+</tr>
+
+<tr class="ok">
+ <td>TC-C9-01(S=1)</td><td>并发接入：批量创建与注册（1 台）</td>
+ <td class="small">TB/模拟器运行中；--scale 1</td>
+ <td class="small">串行 POST /api/devices ×1（autoRegister+autoConnect）→ 轮询模拟器注册完成</td>
+ <td class="small">成功率 100%，记录创建耗时</td>
+ <td class="small">创建+签发+TB 注册 1/1 成功（100%），耗时 0.1s（均 131ms/台）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.1s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C9-02(S=1)</td><td>并发接入：并发上线（1 台）</td>
+ <td class="small">TC-C9-01 创建完成</td>
+ <td class="small">轮询 TB /api/device/info/{id}.active 直至全部在线（超时=60+3N 秒）</td>
+ <td class="small">全部 active=true，记录上线耗时与成功率</td>
+ <td class="small">1/1 全部上线（100%），TB active 全真，耗时 1.0s</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.0s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C9-03(S=1)</td><td>并发遥测：上报入库核验（1 台）</td>
+ <td class="small">TC-C9-02 全部在线</td>
+ <td class="small">轮询各设备 TB latest p（1min 周期首点，超时 240+2N 秒）</td>
+ <td class="small">成功率 100%，记录首轮可见耗时</td>
+ <td class="small">TB latest p 可见 1/1（100%）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.0s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C9-04(S=1)</td><td>并发召测：readRealtimeData（1 台）</td>
+ <td class="small">TC-C9-03 遥测可见</td>
+ <td class="small">线程池(10) 并发 two-way RPC ×1 → 统计 SUCCESS 率与 RTT 分布</td>
+ <td class="small">成功率 100%，记录 RTT min/avg/p95/max</td>
+ <td class="small">SUCCESS 1/1（100%），RTT min=1.29s avg=1.29s p95=1.29s max=1.29s</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">1.3s</td>
+</tr>
+<tr class="ok">
+ <td>TC-C9-05(S=1)</td><td>并发接入：环境清理（1 台）</td>
+ <td class="small">本组用例已完成</td>
+ <td class="small">DELETE /api/devices/{name} ×N + TB DELETE /api/device/{id} ×N → 核实不存在</td>
+ <td class="small">模拟器与 TB 中均无残留 p6s* 设备</td>
+ <td class="small">已清理 1 台（模拟器+TB 均无残留）</td>
+ <td><span class="badge ok">PASS</span></td>
+ <td class="num">0.5s</td>
+</tr>
+</tbody></table>
+
+<h2>三、多设备并发接入（1 / 10 / 100 台实测对比）</h2>
+<table><thead><tr><th>指标 / 用例</th><th>S=1</th><th>S=10</th><th>S=100</th></tr></thead><tbody><tr><td>执行时间</td><td>2026-11-04 19:24:12</td><td>2026-11-04 20:08:22</td><td>2026-11-04 20:11:50</td></tr><tr><td>总耗时</td><td>834s</td><td>6s</td><td>27s</td></tr><tr><td>TC-C1-01</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C1-02</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C1-03</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C2-01</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C2-02</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C2-03</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C3-01</td><td><span class='badge ok'>PASS</span> 47s</td><td>—</td><td>—</td></tr><tr><td>TC-C3-02</td><td><span class='badge ok'>PASS</span> 31s</td><td>—</td><td>—</td></tr><tr><td>TC-C3-03</td><td><span class='badge ok'>PASS</span> 16s</td><td>—</td><td>—</td></tr><tr><td>TC-C4-01</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C4-02</td><td><span class='badge ok'>PASS</span> 132s</td><td>—</td><td>—</td></tr><tr><td>TC-C4-03</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C5-01</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C5-02</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C5-03</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C6-01</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C6-02</td><td><span class='badge ok'>PASS</span> 119s</td><td>—</td><td>—</td></tr><tr><td>TC-C6-03</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C6-04</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C7-01</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C7-02</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C8-01</td><td><span class='badge ok'>PASS</span> 129s</td><td>—</td><td>—</td></tr><tr><td>TC-C8-02</td><td><span class='badge ok'>PASS</span> 130s</td><td>—</td><td>—</td></tr><tr><td>TC-C8-03</td><td><span class='badge ok'>PASS</span> 168s</td><td>—</td><td>—</td></tr><tr><td>TC-C8-04</td><td><span class='badge ok'>PASS</span> 49s</td><td>—</td><td>—</td></tr><tr><td>TC-C9-01(S=1)</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C9-01(S=10)</td><td>—</td><td><span class='badge ok'>PASS</span> 2s</td><td>—</td></tr><tr><td>TC-C9-01(S=100)</td><td>—</td><td>—</td><td><span class='badge ok'>PASS</span> 9s</td></tr><tr><td>TC-C9-02(S=1)</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C9-02(S=10)</td><td>—</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td></tr><tr><td>TC-C9-02(S=100)</td><td>—</td><td>—</td><td><span class='badge ok'>PASS</span> 1s</td></tr><tr><td>TC-C9-03(S=1)</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td><td>—</td></tr><tr><td>TC-C9-03(S=10)</td><td>—</td><td><span class='badge ok'>PASS</span> 0s</td><td>—</td></tr><tr><td>TC-C9-03(S=100)</td><td>—</td><td>—</td><td><span class='badge ok'>PASS</span> 1s</td></tr><tr><td>TC-C9-04(S=1)</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C9-04(S=10)</td><td>—</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td></tr><tr><td>TC-C9-04(S=100)</td><td>—</td><td>—</td><td><span class='badge ok'>PASS</span> 8s</td></tr><tr><td>TC-C9-05(S=1)</td><td><span class='badge ok'>PASS</span> 1s</td><td>—</td><td>—</td></tr><tr><td>TC-C9-05(S=10)</td><td>—</td><td><span class='badge ok'>PASS</span> 2s</td><td>—</td></tr><tr><td>TC-C9-05(S=100)</td><td>—</td><td>—</td><td><span class='badge ok'>PASS</span> 9s</td></tr><tr><td>创建+注册耗时</td><td>0.1s</td><td>1.8s</td><td>8.5s</td></tr><tr><td>全部上线耗时</td><td>1.0s</td><td>1.1s</td><td>0.6s</td></tr><tr><td>召测 RTT avg</td><td>1.29s</td><td>1.1s</td><td>0.69s</td></tr><tr><td>召测 RTT p95</td><td>1.29s</td><td>1.29s</td><td>1.02s</td></tr><tr><td>召测 RTT max</td><td>1.29s</td><td>1.34s</td><td>1.37s</td></tr></tbody></table>
+<p class="meta">说明：S=1 轮为全量（功能 + 规模）；S=10/100 轮仅执行规模用例（-m scale）。
+成功率均为 100%（创建/上线/遥测/召测各环节逐台核验）；RTT 为 two-way RPC 端到端往返耗时。</p>
+
+<h2>四、结果文件</h2>
+<p class="meta">机器可读结果：tests/results_p6_s1.json / s10 / s100；
+运行日志：tests/verify_p6_*.log；本报告：tests/report_p6.html</p>
+</body></html>

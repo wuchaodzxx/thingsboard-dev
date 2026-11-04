@@ -330,8 +330,11 @@ def s10_faults():
     ①缺字段→平台 1min 点缺 p；②越界→平台出现 p=99999；③坏报文→TB 断链；
     ④拒令→REJECTED 2003（在 badJson 生效前发出，保证设备在线）。"""
     now = int(time.time() * 1000)
+    # 注入 count=2（相邻两分钟点不可能同为 15min 整刻 ts）：若注入点恰逢整刻边界，
+    # M04（含 p+dqf）会同 ts 覆盖 M03 注入值（TB 同 key 同 ts 末写胜出），
+    # 造成缺字段/越界点被"结算值"掩盖的假性缺点；count=2 保证至少一点存活。
     # ① 缺字段：下一条 1min 遥测缺 p（平台 dqf 有点而同 ts 无 p 点）
-    api("POST", f"/api/devices/{PV}/inject", json={"mode": "missingField", "count": 1})
+    api("POST", f"/api/devices/{PV}/inject", json={"mode": "missingField", "count": 2})
     def _missing_p():
         hist = tb.get_history_timeseries(dev_id(PV), "p,dqf", now, now + 200000, limit=500)
         p_ts = {pt["ts"] for pt in hist.get("p", [])}
@@ -339,7 +342,7 @@ def s10_faults():
         return bool(holes), holes[:2]
     holes = poll(_missing_p, 150, interval=5, desc="平台缺 p 点(缺字段注入)")
     # ② 越界：下一条遥测 p=99999
-    api("POST", f"/api/devices/{PV}/inject", json={"mode": "outOfRange", "count": 1})
+    api("POST", f"/api/devices/{PV}/inject", json={"mode": "outOfRange", "count": 2})
     def _oor():
         hist = tb.get_history_timeseries(dev_id(PV), "p", now, now + 200000, limit=500)
         bad = [pt for pt in hist.get("p", []) if float(pt["value"]) > 1000]
@@ -362,11 +365,14 @@ def s10_faults():
 
 def s11_fail_cmd():
     # 前序 badJson 断链后设备离线：等待 TB 侧 active=true（模拟器重连早于 TB 会话注册）。
-    # 注意：/api/tenant/devices 列表接口不含 active 字段，必须经 /api/device/{id} 读取。
+    # 注意：本 TB 版本 active 字段仅在 /api/device/info/{id} 中返回。
     def _tb_online():
-        d = tb.get_device_by_id(dev_id(PV))
-        return bool(d.get("active")), d.get("active")
+        a = tb.get_device_info(dev_id(PV)).get("active")
+        return bool(a), a
     poll(_tb_online, 90, desc="s10 断链后 TB active 恢复")
+    # 注入执行失败：检查点在 exec 线程爬坡完成后（devices.py failRemaining），
+    # 80→30 @60kW/min ≈ 50s 后返回 FAILED/2003；150s 轮询窗口充足。
+    api("POST", f"/api/devices/{PV}/inject", json={"mode": "failCmd", "count": 1})
     send_ms = int(time.time() * 1000)
     env = {"cmdId": f"fl-{int(time.time())}", "issuedAt": send_ms,
            "expireAt": send_ms + 120000, "params": {"targetP": 30}}

@@ -66,8 +66,10 @@ def create_device(req: CreateDeviceReq):
         raise HTTPException(400, "非法设备名")
     if req.devType not in ("pv", "pcs", "flex"):
         raise HTTPException(400, "devType 必须为 pv|pcs|flex")
-    if req.name in manager.devices:
-        raise HTTPException(409, f"设备已存在 {req.name}")
+    if req.name in manager.devices:      # 幂等复用：同名设备不重复签发/注册
+        dev = manager.get(req.name)
+        return {"created": req.name, "register": "reuse-existing",
+                "status": dev.status()}
     register_note = "skipped"
     if req.autoRegister:
         pki = certapi._pki()
