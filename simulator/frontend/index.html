@@ -11,7 +11,9 @@
 <script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
 <style>
   body { margin: 0; background: #f5f7fa; font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; }
-  .page { padding: 16px 20px 24px; }
+  .page { padding: 16px 24px 24px; }
+  .el-tabs__nav-scroll { padding-left: 24px; }
+  .logs-expanded { padding: 2px 16px 16px 46px; }
   .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
   .toolbar .spacer { flex: 1; }
   .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
@@ -26,7 +28,7 @@
 <body>
 <div id="app">
   <el-container>
-    <el-header height="56px" style="background:#1f2d3d;color:#fff;display:flex;align-items:center;gap:16px;">
+    <el-header height="56px" style="background:#1f2d3d;color:#fff;display:flex;align-items:center;gap:16px;padding:0 24px;">
       <span style="font-size:17px;font-weight:600;">VPP 设备模拟器</span>
       <span class="sub" style="color:#8a97a8;">X.509 双向 TLS · MQTT 18885 · 报文规范 vpp-1.0</span>
       <span style="flex:1"></span>
@@ -189,8 +191,8 @@
             <el-option label="下行 in(平台→设备)" value="in"></el-option>
             <el-option label="事件 evt" value="evt"></el-option>
           </el-select>
-          <el-select v-model="logFilter.msgType" clearable placeholder="报文类型" style="width:120px" size="small">
-            <el-option v-for="t in msgTypes" :key="t" :label="t" :value="t"></el-option>
+          <el-select v-model="logFilter.msgType" clearable placeholder="报文类型" style="width:170px" size="small">
+            <el-option v-for="t in msgTypes" :key="t" :label="typeCN(t) ? `${t} ${typeCN(t)}` : t" :value="t"></el-option>
           </el-select>
           <el-input v-model="logFilter.q" clearable placeholder="关键字过滤" style="width:180px" size="small" @keyup.enter="loadLogs()"></el-input>
           <el-input-number v-model="logFilter.limit" :min="20" :max="2000" :step="20" size="small" style="width:110px"></el-input-number>
@@ -205,10 +207,12 @@
                   :default-sort="{prop:'seq',order:'descending'}">
           <el-table-column type="expand">
             <template #default="{row}">
-              <div style="margin-bottom:6px;"><b>结构化 payload</b></div>
-              <pre class="pre">{{ pretty(row.payload) }}</pre>
-              <div style="margin:8px 0 6px;"><b>原始报文 raw</b> <span class="sub">（实际收发的原始报文文本，超长截断）</span></div>
-              <pre class="pre">{{ row.raw || '(该记录未保存原始报文)' }}</pre>
+              <div class="logs-expanded">
+                <div style="margin-bottom:6px;"><b>结构化 payload</b></div>
+                <pre class="pre">{{ pretty(row.payload) }}</pre>
+                <div style="margin:8px 0 6px;"><b>原始报文 raw</b> <span class="sub">（实际收发的原始报文文本，超长截断）</span></div>
+                <pre class="pre">{{ row.raw || '(该记录未保存原始报文)' }}</pre>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="时间" width="100">
@@ -218,8 +222,10 @@
           <el-table-column label="方向" width="110">
             <template #default="{row}"><el-tag size="small" effect="plain" :type="row.direction==='out'?'success':(row.direction==='in'?'primary':'info')">{{ row.directionCN || row.direction }}</el-tag></template>
           </el-table-column>
-          <el-table-column prop="msgType" label="类型" width="80">
-            <template #default="{row}"><span class="mono">{{ row.msgType || '-' }}</span></template>
+          <el-table-column label="类型" width="160">
+            <template #default="{row}">
+              <span class="mono">{{ row.msgType || '-' }}</span><span v-if="row.msgType && typeCN(row.msgType)" class="sub"> ({{ typeCN(row.msgType) }})</span>
+            </template>
           </el-table-column>
           <el-table-column prop="cmdId" label="cmdId" width="140">
             <template #default="{row}"><span class="mono">{{ row.cmdId || '-' }}</span></template>
@@ -227,8 +233,12 @@
           <el-table-column label="数据摘要" min-width="260">
             <template #default="{row}"><span class="mono">{{ summary(row) || '-' }}</span></template>
           </el-table-column>
-          <el-table-column label="结果" width="90">
-            <template #default="{row}"><el-tag size="small" :type="row.result==='ok'?'success':(row.result==='cached'?'warning':'danger')" effect="plain">{{ row.result }}</el-tag></template>
+          <el-table-column label="结果" width="105">
+            <template #default="{row}">
+              <el-tooltip :content="resultTip(row.result)" placement="top" :disabled="!resultTip(row.result)">
+                <el-tag size="small" :type="row.result==='ok'?'success':(row.result==='cached'?'warning':'danger')" effect="plain">{{ resultCN(row.result) }}</el-tag>
+              </el-tooltip>
+            </template>
           </el-table-column>
           <el-table-column prop="latencyMs" label="耗时ms" width="75" align="right">
             <template #default="{row}"><span class="mono">{{ row.latencyMs==null?'-':row.latencyMs }}</span></template>
@@ -237,7 +247,7 @@
             <template #default="{row}"><span class="sub">{{ row.error || '' }}</span></template>
           </el-table-column>
         </el-table>
-        <div class="sub mt8">方向：上行=out（设备→平台）、下行=in（平台→设备）、evt=状态事件；日志环形缓冲 20000 条，展开行可查看原始报文，敏感字段（token/私钥/凭据）自动脱敏为 ***REDACTED***。</div>
+        <div class="sub mt8">方向：上行=out（设备→平台）、下行=in（平台→设备）、evt=状态事件；结果：成功=已确认发出、已发送/已接收=正常收发、断线缓存=离线暂存待补传、补传完成=重连后批量回放；日志环形缓冲 20000 条，展开行可查看原始报文，敏感字段（token/私钥/凭据）自动脱敏为 ***REDACTED***。</div>
       </div>
     </el-main>
   </el-container>
@@ -505,6 +515,34 @@ const app = createApp({
     const logExpandKeys = ref([]);
     const onLogExpand = (row, expandedRows) => { logExpandKeys.value = expandedRows.map(r => String(r.seq)); };
     const msgTypes = ['M01', 'M02', 'M03', 'M04', 'M05', 'M06', 'M07', 'M08', 'M11', 'M12', 'M13', 'M14', 'hb', 'inject'];
+    // ---------- 报文类型 / 结果 中文释义（docs/01 §3 报文清单） ----------
+    const MSG_CN = {
+      M01: '设备档案', M02: '业务心跳', M03: '1min遥测', M04: '15min遥测',
+      M05: '召测快照', M06: '历史补传', M07: '调节约束', M08: '配置下发',
+      M11: '告警上报', M12: '指令下发', M13: '即时响应', M14: '指令终态',
+      inject: '异常注入',
+    };
+    const typeCN = t => MSG_CN[t] || (t === 'hb' ? '心跳' : '');
+    const RESULT_CN = {
+      ok: '成功', error: '失败', offline: '离线', online: '上线',
+      cached: '断线缓存', sent: '已发送', 'sent-duplicate': '重复发送',
+      received: '已接收', rejected: '已拒绝', 'replay-done': '补传完成',
+      'history-replay-done': '批量补传完成', created: '已创建', deleted: '已删除',
+      'tb-registered': '已注册平台',
+    };
+    const RESULT_TIP = {
+      ok: '报文已成功发布并被平台确认',
+      cached: '设备离线期间暂存本地，重连后自动补传',
+      sent: '报文已发布到平台（QoS1）',
+      'sent-duplicate': '重复发送（异常注入 dup 生效）',
+      received: '已收到平台下发的报文',
+      rejected: '指令被拒绝（超出约束或参数非法）',
+      'replay-done': '断线重连后缓存批量补传完成',
+      'history-replay-done': '历史数据批量补传完成',
+      'tb-registered': '设备已在 ThingsBoard 平台注册',
+    };
+    const resultCN = r => RESULT_CN[r] || r || '-';
+    const resultTip = r => RESULT_TIP[r] || '';
     // ---------- 数据摘要：在列表直接展示报文关键数值（负荷/电量/表码/状态等） ----------
     const SUMMARY_KEY_ORDER = ['p', 'actualP', 'actualPLimit', 'e_imp', 'e_exp', 'e_imp_15', 'e_exp_15', 'e_day',
       'loadType', 'soc', 'windSpeed', 'hbSeq', 'runState', 'ctrlMode', 'dqf',
@@ -559,6 +597,7 @@ const app = createApp({
       certs, caStatus, dlgImport, importForm, dlgCert, certDetail,
       loadCerts, loadCaStatus, openImport, importCert, openCert, delCert,
       logs, autoLogs, logExpandKeys, onLogExpand, msgTypes, logFilter, loadLogs, exportLogs, summary,
+      typeCN, resultCN, resultTip,
       RefreshCw: ElementPlusIconsVue.Refresh, Plus: ElementPlusIconsVue.Plus, Search: ElementPlusIconsVue.Search,
     };
   }
