@@ -12,7 +12,7 @@
     "runState": { "type": "integer", "enum": [0, 1, 2, 3, 4, 5, 6, 7, 8] },
     "ctrlMode": { "type": "integer", "enum": [0, 1], "description": "0本地 1远程" },
     "devType": { "type": "string", "enum": ["pv", "pcs", "load", "wind"], "description": "pv光伏 pcs储能 load负荷 wind风电（v1.2 起 flex 更名 load）" },
-    "loadType": { "type": "integer", "minimum": 1, "maximum": 99, "description": "负荷分类码（docs/01 §8.5：1空调 2充电桩 3电采暖热泵 4照明 5工业电机 6数据中心 7水泵 20~99厂家自定义）" },
+    "loadType": { "type": "integer", "enum": [1, 2, 3, 4, 5, 6, 7, 99], "description": "负荷分类码（docs/01 §8.5：1一般负荷 2生产负荷 3照明负荷 4空调负荷 5安保负荷 6充电桩负荷 7办公负荷 99其他负荷）" },
     "alarmLevel": { "type": "integer", "enum": [1, 2, 3, 4] },
     "alarmCode": { "type": "integer", "minimum": 1000, "maximum": 9999 },
     "kw": { "type": "number", "minimum": -100000, "maximum": 100000 },

@@ -49,21 +49,21 @@ def _make(name: str, dev_type: str, cap: float, load_type: int = 1,
         "autoRegister": auto_register, "autoConnect": connect})
 
 
-# ---------------- IT-01 load 设备类型（充电桩负荷） ----------------
+# ---------------- IT-01 load 设备类型（充电桩负荷，v1.3 编码表 loadType=6） ----------------
 def test_it01_load_device(tb, rec):
-    rec(tcid="TC-IT-01", name="devType=load 设备创建/注册/遥测（loadType=2 充电桩）",
+    rec(tcid="TC-IT-01", name="devType=load 设备创建/注册/遥测（loadType=6 充电桩）",
         precondition="模拟器与 TB 运行中，CA 链正常",
-        steps="1) 创建 load 设备 loadType=2 自动注册；2) 等 TB 建档与上线；"
+        steps="1) 创建 load 设备 loadType=6 自动注册；2) 等 TB 建档与上线；"
               "3) 读 TB 遥测 p/loadType 与客户端属性 devType",
-        expected="注册成功；TB active；p≤0（受电为负）；遥测含 loadType=2；devType 属性为 load")
+        expected="注册成功；TB active；p≤0（受电为负）；遥测含 loadType=6；devType 属性为 load")
     purge_devices(tb, ["load-it-01"])
-    r = _make("load-it-01", "load", 50, load_type=2)
+    r = _make("load-it-01", "load", 50, load_type=6)
     assert "tb-registered" in r["register"], f"注册流水线异常: {r['register']}"
     wait_for(lambda: (tb_dev_id(tb, "load-it-01"), None), 30, desc="TB 建档")
     wait_for(lambda: (tb_active(tb, "load-it-01"), None), 60, desc="load-it-01 上线")
     t = wait_for(lambda: ((x := _ts_ready(tb, "load-it-01", "p,loadType")) is not None, x),
                  90, desc="遥测 p/loadType 落库")
-    assert str(t["loadType"][0]["value"]) == "2", f"loadType 上报错误: {t}"
+    assert str(t["loadType"][0]["value"]) == "6", f"loadType 上报错误: {t}"
     p = float(t["p"][0]["value"])
     assert p <= 0, f"load 受电应为负值: {p}"
     attr = wait_for(lambda: ((a := _client_attr(tb, "load-it-01", "devType")).get("devType") == "load", a),

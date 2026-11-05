@@ -56,8 +56,11 @@ class CreateDeviceReq(BaseModel):
     name: str
     devType: str = "pv"          # pv | pcs | load | wind
     capKw: float = 100.0
-    loadType: int = 1            # devType=load 时生效：负荷分类码（docs/01 §8.5，1~99）
+    loadType: int = 1            # devType=load 时生效：负荷分类码（docs/01 §8.5：1~7,99）
     autoConnect: bool = True     # 证书未导入时连接线程会自动重试
+
+
+LOAD_TYPE_CODES = (1, 2, 3, 4, 5, 6, 7, 99)   # 负荷分类编码（docs/01 §8.5）
 
 
 @app.post("/api/devices")
@@ -66,8 +69,8 @@ def create_device(req: CreateDeviceReq):
         raise HTTPException(400, "非法设备名")
     if req.devType not in ("pv", "pcs", "load", "wind"):
         raise HTTPException(400, "devType 必须为 pv|pcs|load|wind")
-    if req.devType == "load" and not (1 <= req.loadType <= 99):
-        raise HTTPException(400, "loadType 必须为 1~99（编码见 docs/01 §8.5）")
+    if req.devType == "load" and req.loadType not in LOAD_TYPE_CODES:
+        raise HTTPException(400, "loadType 必须为 1~7 或 99（编码见 docs/01 §8.5）")
     if req.name in manager.devices:      # 幂等复用：同名设备不重复创建
         dev = manager.get(req.name)
         return {"created": req.name, "status": dev.status()}
@@ -171,7 +174,7 @@ def adjust_curve(name: str, req: CurveReq):
 # ---------------- 负荷特征模拟配置（devType=load/wind） ----------------
 class LoadProfileReq(BaseModel):
     """负荷特征参数：空字段保持不变。load 设备与 wind 设备共用（wind 仅 windSpeedAvg 生效）。"""
-    loadType: int | None = None        # 负荷分类码 1~99（docs/01 §8.5 编码表）
+    loadType: int | None = None        # 负荷分类码（docs/01 §8.5 编码表：1~7,99）
     baseRatio: float | None = None     # 基线负荷率 0~1（0/空=按 loadType 特征曲线）
     noiseAmp: float | None = None      # 随机波动幅度 0~0.3（空=默认 0.08）
     dutyOnMin: int | None = None       # 占空启停：运行分钟（0=不启用）
@@ -187,8 +190,8 @@ def set_load_profile(name: str, req: LoadProfileReq):
     if c.devType not in ("load", "wind"):
         raise HTTPException(400, "仅 load/wind 类型设备支持负荷特征配置")
     d = req.model_dump(exclude_none=True)
-    if "loadType" in d and not (1 <= d["loadType"] <= 99):
-        raise HTTPException(400, "loadType 必须为 1~99")
+    if "loadType" in d and d["loadType"] not in LOAD_TYPE_CODES:
+        raise HTTPException(400, "loadType 必须为 1~7 或 99")
     if "baseRatio" in d and not (0 < d["baseRatio"] <= 1):
         raise HTTPException(400, "baseRatio 必须为 (0,1]")
     if "noiseAmp" in d and not (0 <= d["noiseAmp"] <= 0.3):

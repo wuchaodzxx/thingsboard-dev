@@ -64,34 +64,30 @@ def pcs_schedule_target(ts_ms: int, chg_pmax: float, dis_pmax: float) -> float:
 def _load_shape(load_type: int, hour: float) -> float:
     """loadType 负荷特征形状系数（0~1，编码定义见 docs/01 §8.5）。
 
-    1 空调 / 2 充电桩 / 3 电采暖热泵 / 4 照明 / 5 工业电机 /
-    6 数据中心 / 7 水泵类 / 20~99 其他（厂家自定义，默认日间曲线）
+    1 一般 / 2 生产 / 3 照明 / 4 空调 / 5 安保 / 6 充电桩 / 7 办公 / 99 其他
     """
-    if load_type == 1:                       # 空调：日间主峰 8~22
+    if load_type == 1:                       # 一般负荷：常规日间曲线
+        return 0.6 + 0.15 * math.sin(math.pi * max(0.0, min(1.0, (hour - 7) / 15)))
+    if load_type == 2:                       # 生产负荷：三班倒近平坦
+        return 0.6
+    if load_type == 3:                       # 照明负荷：晚间单一高峰
+        return 0.85 if 18 <= hour < 23 else 0.12
+    if load_type == 4:                       # 空调负荷：日间主峰 8~22
         if 8 <= hour < 22:
             return 0.55 + 0.25 * math.sin(math.pi * (hour - 8) / 14)
         return 0.25
-    if load_type == 2:                       # 充电桩：白天散充 + 晚 18~24 高峰
+    if load_type == 5:                       # 安保负荷：全天恒定（安防不允许中断）
+        return 0.5
+    if load_type == 6:                       # 充电桩：白天散充 + 晚 18~24 高峰
         if 18 <= hour < 24:
             return 0.65 + 0.15 * math.sin(math.pi * (hour - 18) / 6)
         if 7 <= hour < 18:
             return 0.35
         return 0.2                           # 凌晨低谷
-    if load_type == 3:                       # 电采暖/热泵：早晚双峰
-        if 6 <= hour < 9 or 17 <= hour < 22:
-            return 0.8
-        if 22 <= hour or hour < 6:
-            return 0.45
-        return 0.55
-    if load_type == 4:                       # 照明：晚间单一高峰
-        return 0.85 if 18 <= hour < 23 else 0.12
-    if load_type == 5:                       # 工业电机：三班倒近平坦
-        return 0.6
-    if load_type == 6:                       # 数据中心：恒定高负荷
-        return 0.8
-    if load_type == 7:                       # 水泵类：日间运行
-        return 0.5 if 7 <= hour < 20 else 0.15
+    if load_type == 7:                       # 办公负荷：工作时段 8~19 主峰
+        return 0.65 if 8 <= hour < 19 else 0.15
     return 0.6 + 0.15 * math.sin(math.pi * max(0.0, min(1.0, (hour - 7) / 15)))
+                                     # 99 其他：同一般负荷默认日间曲线
 
 
 def load_power(ts_ms: int, cap_kw: float, seed: str, load_type: int = 1,

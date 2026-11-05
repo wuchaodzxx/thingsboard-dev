@@ -224,6 +224,9 @@
           <el-table-column prop="cmdId" label="cmdId" width="140">
             <template #default="{row}"><span class="mono">{{ row.cmdId || '-' }}</span></template>
           </el-table-column>
+          <el-table-column label="数据摘要" min-width="260">
+            <template #default="{row}"><span class="mono">{{ summary(row) || '-' }}</span></template>
+          </el-table-column>
           <el-table-column label="结果" width="90">
             <template #default="{row}"><el-tag size="small" :type="row.result==='ok'?'success':(row.result==='cached'?'warning':'danger')" effect="plain">{{ row.result }}</el-tag></template>
           </el-table-column>
@@ -407,10 +410,10 @@ const app = createApp({
 
     const dlgCreate = ref(false);
     const loadTypeOptions = [
-      { v: 1, label: '1 空调负荷' }, { v: 2, label: '2 充电桩负荷' },
-      { v: 3, label: '3 电采暖/热泵' }, { v: 4, label: '4 照明负荷' },
-      { v: 5, label: '5 工业电机' }, { v: 6, label: '6 数据中心' },
-      { v: 7, label: '7 水泵类' }, { v: 20, label: '20 其他（厂家自定义）' },
+      { v: 1,  label: '1 一般负荷' }, { v: 2,  label: '2 生产负荷' },
+      { v: 3,  label: '3 照明负荷' }, { v: 4,  label: '4 空调负荷' },
+      { v: 5,  label: '5 安保负荷' }, { v: 6,  label: '6 充电桩负荷' },
+      { v: 7,  label: '7 办公负荷' }, { v: 99, label: '99 其他负荷' },
     ];
     const createForm = reactive({ name: '', devType: 'pv', loadType: 1, capKw: 100, autoConnect: true });
     const openCreate = () => { Object.assign(createForm, { name: '', devType: 'pv', loadType: 1, capKw: 100, autoConnect: true }); dlgCreate.value = true; };
@@ -501,7 +504,27 @@ const app = createApp({
     // 用 expand-row-keys 保持已展开行（行被新数据挤出列表时自然收起）
     const logExpandKeys = ref([]);
     const onLogExpand = (row, expandedRows) => { logExpandKeys.value = expandedRows.map(r => String(r.seq)); };
-    const msgTypes = ['M01', 'M02', 'M05', 'M06', 'M07', 'M08', 'M12', 'M13', 'M14', 'hb', 'inject'];
+    const msgTypes = ['M01', 'M02', 'M03', 'M04', 'M05', 'M06', 'M07', 'M08', 'M11', 'M12', 'M13', 'M14', 'hb', 'inject'];
+    // ---------- 数据摘要：在列表直接展示报文关键数值（负荷/电量/表码/状态等） ----------
+    const SUMMARY_KEY_ORDER = ['p', 'actualP', 'actualPLimit', 'e_imp', 'e_exp', 'e_imp_15', 'e_exp_15', 'e_day',
+      'loadType', 'soc', 'windSpeed', 'hbSeq', 'runState', 'ctrlMode', 'dqf',
+      'cmdState', 'errCode', 'dup', 'cfgVer', 'cfgVerApplied', 'cfgResult',
+      'alarmId', 'alarmCode', 'alarmLevel', 'alarmActive', 'devType', 'capKw', 'protocolVer'];
+    const fmtVal = v => {
+      if (typeof v === 'number') return Math.abs(v) >= 1000 ? String(Math.round(v)) : String(parseFloat(v.toFixed(3)));
+      return String(v);
+    };
+    const summary = row => {
+      const pl = row && row.payload;
+      if (pl == null || typeof pl !== 'object') return '';
+      const vals = pl.values || pl.params || pl;
+      const keys = Object.keys(vals).filter(k => k !== 'ts')
+        .sort((a, b) => {
+          const ia = SUMMARY_KEY_ORDER.indexOf(a), ib = SUMMARY_KEY_ORDER.indexOf(b);
+          return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+        });
+      return keys.slice(0, 8).map(k => `${k}=${fmtVal(vals[k])}`).join(', ');
+    };
     const logFilter = reactive({ device: '', direction: '', msgType: '', q: '', limit: 200 });
     const logParams = () => {
       const p = new URLSearchParams();
@@ -535,7 +558,7 @@ const app = createApp({
       fDevice, curDev, faultModes, inject,
       certs, caStatus, dlgImport, importForm, dlgCert, certDetail,
       loadCerts, loadCaStatus, openImport, importCert, openCert, delCert,
-      logs, autoLogs, logExpandKeys, onLogExpand, msgTypes, logFilter, loadLogs, exportLogs,
+      logs, autoLogs, logExpandKeys, onLogExpand, msgTypes, logFilter, loadLogs, exportLogs, summary,
       RefreshCw: ElementPlusIconsVue.Refresh, Plus: ElementPlusIconsVue.Plus, Search: ElementPlusIconsVue.Search,
     };
   }

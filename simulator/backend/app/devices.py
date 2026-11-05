@@ -44,7 +44,7 @@ class DeviceConfig:
     swVer: str = "V1.0.0"
     hwVer: str = "H1.0"
     # 负荷特征模拟（devType=load/wind，docs/01 §8.5）
-    loadType: int = 1                  # loadType 负荷分类码（1 空调…20~99 厂家自定义）
+    loadType: int = 1                  # loadType 负荷分类码（1~7,99，见 docs/01 §8.5）
     loadBaseRatio: float = 0.0         # 基线负荷率 0~1（0=按 loadType 特征曲线）
     loadNoiseAmp: float = 0.0          # 随机波动幅度（0=默认 0.08）
     dutyOnMin: int = 0                 # 占空启停：运行分钟（0=不启用）
