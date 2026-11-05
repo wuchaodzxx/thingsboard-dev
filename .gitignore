@@ -9,4 +9,5 @@ deploy/certs/
 deploy/.env
 test-output/
 *.log
+*.DS_Store
 tests/p7_v13/_tmp/
