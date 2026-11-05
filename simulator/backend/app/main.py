@@ -15,15 +15,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import certapi, verifyapi
-from .certapi import SECRETS_DIR  # noqa: F401  (校验 certmgr 路径可导入)
+from .certapi import STORE_DIR     # 导入证书存放目录（证书工具线下同步）
 from .devices import DeviceConfig, DeviceManager
 from .logs import LOGS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 WORKSPACE = Path(__file__).resolve().parents[3]
-CA_FILE = str(SECRETS_DIR / "root" / "ca.pem")
-DEVICE_CERT_DIR = str(SECRETS_DIR / "devices")
+CA_FILE = str(STORE_DIR / "ca.pem")            # 平台根证书（证书工具导出后线下导入）
+DEVICE_CERT_DIR = str(STORE_DIR / "devices")   # 设备证书目录（cert.pem/key.pem）
 MQTT_HOST = os.environ.get("SIM_MQTT_HOST", "localhost")
 MQTT_PORT = int(os.environ.get("SIM_MQTT_PORT", "18885"))
 TB_URL = os.environ.get("TB_URL", "http://localhost:18080")
@@ -57,8 +57,7 @@ class CreateDeviceReq(BaseModel):
     devType: str = "pv"          # pv | pcs | load | wind
     capKw: float = 100.0
     loadType: int = 1            # devType=load 时生效：负荷分类码（docs/01 §8.5，1~99）
-    autoRegister: bool = True    # True=自动签发证书+注册 TB；False=创建后手动配置证书并手动注册
-    autoConnect: bool = True
+    autoConnect: bool = True     # 证书未导入时连接线程会自动重试
 
 
 @app.post("/api/devices")
@@ -69,34 +68,16 @@ def create_device(req: CreateDeviceReq):
         raise HTTPException(400, "devType 必须为 pv|pcs|load|wind")
     if req.devType == "load" and not (1 <= req.loadType <= 99):
         raise HTTPException(400, "loadType 必须为 1~99（编码见 docs/01 §8.5）")
-    if req.name in manager.devices:      # 幂等复用：同名设备不重复签发/注册
+    if req.name in manager.devices:      # 幂等复用：同名设备不重复创建
         dev = manager.get(req.name)
-        return {"created": req.name, "register": "reuse-existing",
-                "status": dev.status()}
-    register_note = "skipped"
-    if req.autoRegister:
-        pki = certapi._pki()
-        with certapi._lock:
-            have = any(c["name"] == req.name and str(c["kind"]).startswith("device")
-                       for c in pki.list_certs())
-            if not have:
-                pki.issue_device_cert(req.name)
-                register_note = "cert-issued"
-            else:
-                register_note = "cert-exists"
-            cert_pem = pki.cert_pem(req.name)
-        try:
-            certapi._tb().register_device_with_cert(req.name, cert_pem, req.devType)
-            register_note += "+tb-registered"
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"TB 注册失败: {e}") from e
-    else:
-        register_note = "manual-pending"   # 待手动配置证书 + 手动注册
+        return {"created": req.name, "status": dev.status()}
+    # 模拟器不签发证书：设备创建后，先在「证书导入」页导入证书工具线下同步的证书，
+    # 再点设备行「注册」（TB X.509 建档）与「连接」。
     cfg = DeviceConfig.defaults_for(req.devType, req.name, req.capKw)
     if req.devType == "load":
         cfg.loadType = req.loadType
     dev = manager.create(cfg, auto_start=req.autoConnect)
-    return {"created": req.name, "register": register_note, "status": dev.status()}
+    return {"created": req.name, "status": dev.status()}
 
 
 @app.get("/api/devices")
@@ -247,22 +228,18 @@ def get_load_profile(name: str):
                             "windSpeedAvg": c.windSpeedAvg}}
 
 
-# ---------------- 手动注册（创建后手动配置证书场景） ----------------
+# ---------------- 手动注册（先在「证书导入」页导入证书工具线下同步的证书） ----------------
 @app.post("/api/devices/{name}/register")
 def register_device_manual(name: str):
-    """手动注册：使用已配置的设备证书在 TB 建档并绑定 X.509 凭据（devType 取设备配置）。
+    """手动注册：使用已导入的设备证书在 TB 建档并绑定 X.509 凭据（devType 取设备配置）。
 
-    适用流程：创建设备(autoRegister=false) → 手动签发/导入证书 → 本接口注册 → 连接。
+    完整流程：证书管理工具签发导出 → 线下同步 → 「证书导入」页导入 → 本接口注册 → 连接。
     """
     dev = manager.get(name) or _err404(name)
-    pki = certapi._pki()
-    with certapi._lock:
-        have = any(x["name"] == name and str(x["kind"]).startswith("device")
-                   for x in pki.list_certs())
-        if not have:
-            raise HTTPException(400, "设备证书未配置：请先签发（POST /api/certs/device）"
-                                     "或导入（POST /api/certs/import）")
-        cert_pem = pki.cert_pem(name)
+    cert_file = certapi.STORE_DIR / "devices" / name / "cert.pem"
+    if not cert_file.is_file():
+        raise HTTPException(400, "设备证书未导入：请先在「证书导入」页导入证书管理工具导出的 cert.pem/key.pem")
+    cert_pem = cert_file.read_text()
     try:
         certapi._tb().register_device_with_cert(name, cert_pem, dev.cfg.devType)
     except Exception as e:  # noqa: BLE001

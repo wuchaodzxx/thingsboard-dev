@@ -45,7 +45,7 @@ services:
     volumes:
       - tb-data:/data
       - tb-logs:/var/log/thingsboard
-      # P3：MQTT TLS 服务器证书（certmgr issue-server 产物，只读挂载）
+      # MQTT TLS 服务器证书（证书管理工具签发并导出装配包，线下覆盖此目录，只读挂载）
       - ./certs/server:/certs/server:ro
     logging:
       driver: json-file
@@ -86,8 +86,9 @@ services:
       # certmgr 注册设备走 TB REST（容器内 9090）
       TB_URL: http://thingsboard:9090
     volumes:
-      # 设备证书签发/读取（certapi 读写 secrets；与宿主机直跑共用同一证书目录）
-      - ../certmgr/secrets:/workspace/certmgr/secrets
+      # 导入的设备证书/平台根证书（证书管理工具签发导出后线下同步；
+      # 经「证书导入」页写入，与宿主机直跑共用同一目录）
+      - ../simulator/data:/workspace/simulator/data
     logging:
       driver: json-file
       options:

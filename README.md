@@ -1,6 +1,6 @@
 # 虚拟电厂物联接入验证环境
 
-基于 **ThingsBoard CE 3.5.1**（固定镜像 `thingsboard/tb-postgres:3.5.1`）构建的虚拟电厂（VPP）物联接入验证项目：MQTT over TLS（X.509 双向认证）设备接入（pv / pcs / load / wind 四类设备）、设备模拟器与验证控制台、36 例自动化测试（1/10/100 三档并发）、交付级技术规范与双平台一键脚本。v1.2 迭代新增：负荷（load，原 flex）与风电（wind）设备类型、负荷特征模拟（基线/波动/占空启停/风速）、手动配置证书+手动注册、日志数据方向与原始报文记录。
+基于 **ThingsBoard CE 3.5.1**（固定镜像 `thingsboard/tb-postgres:3.5.1`）构建的虚拟电厂（VPP）物联接入验证项目：MQTT over TLS（X.509 双向认证）设备接入（pv / pcs / load / wind 四类设备）、设备模拟器与验证控制台、36 例自动化测试（1/10/100 三档并发）、交付级技术规范与双平台一键脚本。v1.3 迭代：证书管理拆出为**独立小工具 certadmin**（:19001，docker-compose 单独管理、可异机部署），范围精简为新增/查看/导出，模拟器仅保留证书导入+注册+连接（完整流程见 docs/03 §4）。
 
 ## 快速上手（macOS / Linux）
 
@@ -21,9 +21,10 @@ scripts/vpp.sh test 100
 
 | 入口 | 地址 | 说明 |
 |---|---|---|
-| 验证控制台（模拟器前端） | http://localhost:19000/ | 设备管理/异常注入/证书管理/报文日志 |
+| 证书管理工具 certadmin | http://localhost:19001/ | 证书新增/查看/导出（独立编排，可异机部署） |
+| 验证控制台（模拟器前端） | http://localhost:19000/ | 设备管理/异常注入/证书导入/报文日志 |
 | ThingsBoard Web UI | http://localhost:18080/ | 演示账号 `tenant@thingsboard.org` / `tenant` |
-| MQTT over TLS（主接入） | localhost:18885 | X.509 双向认证（证书经控制台或 certmgr 签发） |
+| MQTT over TLS（主接入） | localhost:18885 | X.509 双向认证（证书经 certadmin 签发导出，线下同步） |
 
 ## 常用命令
 
@@ -45,7 +46,8 @@ thingsboard-dev/
 │   │                                # 04 模拟器使用 / 05 测试方案与实测 / 技术规范终稿
 ├── spec/schemas/                    # 机器可读 JSON Schema（15 个，与 docs/01 同步）
 ├── deploy/                          # docker-compose + .env.example + simulator.Dockerfile
-├── certmgr/                         # 证书签发/管理（secrets 不入库）
+├── certadmin/                       # v1.3 独立证书管理工具（docker-compose 单独管理，可异机部署；data 不入库）
+├── certmgr/                         # 证书 PKI 库（certadmin 复用；CLI 保留为调试入口）
 ├── simulator/                       # 设备模拟器后端（FastAPI）+ 前端（Vue3）
 ├── tests/                           # P6 pytest 用例 + results_p6_s*.json + report_p6.html
 ├── scripts/                         # vpp.sh / vpp.ps1 一键脚本
@@ -72,6 +74,7 @@ docker compose --project-directory deploy --env-file deploy/.env \
 | 18885 | 8883 | MQTT over TLS（主接入，X.509 双向认证） |
 | 18886 | 1883 | MQTT 明文（仅调试，默认关闭） |
 | 19000 | 9000 | 模拟器 / 验证控制台 |
+| 19001 | 9001 | 证书管理工具 certadmin（独立编排 `certadmin/docker-compose.yml`） |
 
 端口冲突时修改 `deploy/.env`（模板 `deploy/.env.example`）后重新 `start`。
 
@@ -82,7 +85,7 @@ docker compose --project-directory deploy --env-file deploy/.env \
 | [docs/00-项目总体规划.md](docs/00-项目总体规划.md) | 目标、选型、阶段门禁、变更记录 |
 | [docs/01-物联交互报文规范.md](docs/01-物联交互报文规范.md) | M01~M16 报文详规、示例、时序图全集 |
 | [docs/02-系统架构与部署手册.md](docs/02-系统架构与部署手册.md) | 部署实测记录、运维命令、常见问题 |
-| [docs/03-证书管理操作手册.md](docs/03-证书管理操作手册.md) | PKI 体系、certmgr 命令、失败用例实测 |
+| [docs/03-证书管理操作手册.md](docs/03-证书管理操作手册.md) | certadmin 独立工具、证书完整流程（签发→导出→线下同步→导入→注册→连接）、失败用例实测 |
 | [docs/04-模拟器使用说明.md](docs/04-模拟器使用说明.md) | 控制台用法、故障注入、联调实测 |
 | [docs/05-自动化测试方案与用例.md](docs/05-自动化测试方案与用例.md) | 30 例用例、1/10/100 实测结果 |
 | [docs/虚拟电厂物联设备通信与接入技术规范.md](docs/虚拟电厂物联设备通信与接入技术规范.md) | **交付终稿**：协议+安全+性能指标汇编 |

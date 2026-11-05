@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VPP 证书管理工具</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/index.css">
+<script src="https://cdn.jsdelivr.net/npm/vue@3.4.38/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/index.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.8/dist/locale/zh-cn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
+<style>
+  body { margin: 0; background: #f5f7fa; font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .page { padding: 16px 20px 24px; }
+  .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+  .pre { background: #f6f8fa; padding: 10px; border-radius: 6px; max-height: 340px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .title { font-size: 15px; font-weight: 600; margin: 0 0 12px; color: #303133; }
+  .sub { color: #909399; font-size: 12px; }
+  .mt8 { margin-top: 8px; }
+  .ca-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <el-container>
+    <el-header height="56px" style="background:#1f2d3d;color:#fff;display:flex;align-items:center;gap:16px;">
+      <span style="font-size:17px;font-weight:600;">VPP 证书管理工具</span>
+      <span class="sub" style="color:#8a97a8;">独立部署 · 签发/查看/导出 · 线下交付</span>
+      <span style="flex:1"></span>
+      <el-tag :type="health.status==='ok' && ca.initialized ? 'success' : 'danger'" effect="dark" size="small">
+        {{ health.status==='ok' ? (ca.initialized ? '根证书就绪' : 'CA 初始化中…') : '服务异常' }}
+      </el-tag>
+    </el-header>
+    <el-main style="padding:0;">
+
+      <!-- ============ CA 概览（默认已生成，仅查看/导出） ============ -->
+      <div class="page">
+        <div class="ca-grid">
+          <el-card shadow="never">
+            <template #header>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <b>平台根证书</b>
+                <el-tag size="small" type="success" effect="plain">默认已生成</el-tag>
+                <span class="spacer" style="flex:1"></span>
+                <el-button size="small" @click="openCert('根证书')">查看</el-button>
+                <el-button size="small" type="primary" plain @click="downloadPem('/api/ca/root-ca.pem','root-ca.pem')">导出 root-ca.pem</el-button>
+              </div>
+            </template>
+            <el-descriptions :column="1" border size="small" v-if="ca.root">
+              <el-descriptions-item label="CN">{{ ca.root.cn }}</el-descriptions-item>
+              <el-descriptions-item label="序列号"><span class="mono">{{ ca.root.serial }}</span></el-descriptions-item>
+              <el-descriptions-item label="有效期"><span class="mono">{{ ca.root.notBefore }} ~ {{ ca.root.notAfter }}</span></el-descriptions-item>
+            </el-descriptions>
+            <div v-else class="sub">尚未初始化，请稍后刷新</div>
+          </el-card>
+          <el-card shadow="never">
+            <template #header>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <b>中间证书</b>
+                <el-tag size="small" type="info" effect="plain">签发 CA</el-tag>
+                <span style="flex:1"></span>
+                <el-button size="small" @click="openCert('中间证书')">查看</el-button>
+                <el-button size="small" type="primary" plain @click="downloadPem('/api/ca/chain.pem','ca-chain.pem')">导出证书链</el-button>
+              </div>
+            </template>
+            <el-descriptions :column="1" border size="small" v-if="ca.intermediate">
+              <el-descriptions-item label="CN">{{ ca.intermediate.cn }}</el-descriptions-item>
+              <el-descriptions-item label="序列号"><span class="mono">{{ ca.intermediate.serial }}</span></el-descriptions-item>
+              <el-descriptions-item label="有效期"><span class="mono">{{ ca.intermediate.notBefore }} ~ {{ ca.intermediate.notAfter }}</span></el-descriptions-item>
+            </el-descriptions>
+            <div v-else class="sub">尚未初始化，请稍后刷新</div>
+          </el-card>
+        </div>
+
+        <el-alert type="info" :closable="false" style="margin-bottom:14px"
+                  title="完整流程：本工具签发证书并导出 → 线下同步（root-ca.pem 给 TB/设备信任；服务器装配包给 TB；设备交付包给厂家/模拟器）→ TB 装配服务器证书并重启 → 设备侧导入证书后注册、连接。CA 私钥仅存于本工具数据卷，不经 API 暴露。"></el-alert>
+
+        <!-- ============ 证书列表 ============ -->
+        <div class="toolbar">
+          <el-button :icon="RefreshCw" @click="loadCerts()">刷新</el-button>
+          <el-dropdown @command="openAdd" trigger="click" style="margin-left:12px;">
+            <el-button type="primary" :icon="Plus">新增证书<el-icon style="margin-left:6px;"><arrow-down /></el-icon></el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="device">签发设备证书（平台生成密钥对）</el-dropdown-item>
+                <el-dropdown-item command="csr">代签外部 CSR（私钥不出厂家环境）</el-dropdown-item>
+                <el-dropdown-item command="server">签发服务器证书（TB mqtts 装配包）</el-dropdown-item>
+                <el-dropdown-item command="import" divided>导入已有证书（登记入册）</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-select v-model="kindFilter" clearable placeholder="全部类型" style="width:160px">
+            <el-option v-for="k in kindOptions" :key="k" :label="k" :value="k"></el-option>
+          </el-select>
+          <span class="spacer"></span>
+          <span class="sub">共 {{ filteredCerts.length }} 本</span>
+        </div>
+        <el-table :data="filteredCerts" border size="small" :row-key="r=>r.name">
+          <el-table-column prop="name" label="名称" min-width="130"></el-table-column>
+          <el-table-column prop="cn" label="CN" min-width="150"></el-table-column>
+          <el-table-column label="类型" width="120">
+            <template #default="{row}">
+              <el-tag size="small" :type="kindTag(row.kind)" effect="plain">{{ row.kind }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="serial" label="序列号" width="130">
+            <template #default="{row}"><span class="mono">{{ (row.serial||'').slice(-12) }}</span></template>
+          </el-table-column>
+          <el-table-column prop="notBefore" label="生效" width="150">
+            <template #default="{row}"><span class="mono">{{ row.notBefore }}</span></template>
+          </el-table-column>
+          <el-table-column prop="notAfter" label="到期" width="150">
+            <template #default="{row}"><span class="mono">{{ row.notAfter }}</span></template>
+          </el-table-column>
+          <el-table-column label="私钥" width="70" align="center">
+            <template #default="{row}">
+              <el-tag v-if="row.hasKey" size="small" type="success" effect="plain">在册</el-tag>
+              <el-tag v-else size="small" type="info" effect="plain">无</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="交付状态" width="130">
+            <template #default="{row}">
+              <el-tag v-if="row.deliveredAt" size="small" :type="row.keyDestroyedAt?'warning':'success'" effect="plain">
+                {{ row.keyDestroyedAt ? '已交付·私钥销毁' : '已交付' }}
+              </el-tag>
+              <el-tag v-else size="small" type="info" effect="plain">未交付</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="270" fixed="right">
+            <template #default="{row}">
+              <el-button size="small" @click="openCert(row.name)">详情</el-button>
+              <el-button size="small" @click="verifyCert(row.name)">校验链</el-button>
+              <el-button size="small" type="primary" plain @click="downloadBundle(row)">导出</el-button>
+              <el-button size="small" type="warning" plain :disabled="row.deliveredAt || row.kind==='root-ca' || row.kind==='intermediate-ca'" @click="openDeliver(row)">交付登记</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="sub mt8">根证书/中间证书为系统项，不提供生成入口（首次启动自动生成）；CA 私钥仅存于本工具数据卷，导出内容不含任何 CA 私钥。</div>
+      </div>
+    </el-main>
+  </el-container>
+
+  <!-- 签发设备证书 -->
+  <el-dialog v-model="dlgIssue" title="签发设备证书" width="440px">
+    <el-alert type="info" :closable="false" style="margin-bottom:12px"
+              title="平台生成密钥对并签发证书；签发后通过列表「导出」下载交付包，线下同步给厂家/模拟器。"></el-alert>
+    <el-form label-width="90px">
+      <el-form-item label="名称"><el-input v-model="issueForm.name" placeholder="设备名 = 证书 CN，如 pv-3001"></el-input></el-form-item>
+      <el-form-item label="有效天数"><el-input-number v-model="issueForm.days" :min="1" :max="36500"></el-input-number></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgIssue=false">取消</el-button>
+      <el-button type="primary" @click="issueDevice()">签发</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 代签外部 CSR -->
+  <el-dialog v-model="dlgCsr" title="代签外部 CSR（私钥不出厂家环境）" width="600px">
+    <el-form label-width="90px">
+      <el-form-item label="名称"><el-input v-model="csrForm.name" placeholder="设备名 = 证书 CN"></el-input></el-form-item>
+      <el-form-item label="有效天数"><el-input-number v-model="csrForm.days" :min="1" :max="3650"></el-input-number></el-form-item>
+      <el-form-item label="CSR(PEM)"><el-input v-model="csrForm.csrPem" type="textarea" :rows="7" placeholder="-----BEGIN CERTIFICATE REQUEST-----"></el-input></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgCsr=false">取消</el-button>
+      <el-button type="primary" @click="signCsr()">签发</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 签发服务器证书 -->
+  <el-dialog v-model="dlgServer" title="签发服务器证书（TB mqtts）" width="560px">
+    <el-alert type="info" :closable="false" style="margin-bottom:12px"
+              title="导出装配包后线下同步至 TB 主机覆盖 deploy/certs/server/ 并重启 TB；SAN 须覆盖设备实际连接的主机名/IP。"></el-alert>
+    <el-form label-width="110px">
+      <el-form-item label="名称"><el-input v-model="serverForm.name" placeholder="默认 server"></el-input></el-form-item>
+      <el-form-item label="有效天数"><el-input-number v-model="serverForm.days" :min="1" :max="36500"></el-input-number></el-form-item>
+      <el-form-item label="DNS SAN">
+        <el-select v-model="serverForm.dns" multiple filterable allow-create default-first-option
+                   placeholder="输入主机名后回车，如 localhost、tb" style="width:100%"></el-select>
+      </el-form-item>
+      <el-form-item label="IP SAN">
+        <el-select v-model="serverForm.ips" multiple filterable allow-create default-first-option
+                   placeholder="输入 IP 后回车，如 127.0.0.1、192.168.1.10" style="width:100%"></el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgServer=false">取消</el-button>
+      <el-button type="primary" @click="issueServer()">签发</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 导入已有证书 -->
+  <el-dialog v-model="dlgImport" title="导入已有证书（登记入册）" width="620px">
+    <el-alert type="info" :closable="false" style="margin-bottom:12px"
+              title="适用于证书由第三方预先持有的场景：导入登记后可统一查看/导出交付包；私钥可选一并入册。"></el-alert>
+    <el-form label-width="90px">
+      <el-form-item label="名称"><el-input v-model="importForm.name" placeholder="须与证书 CN 一致"></el-input></el-form-item>
+      <el-form-item label="证书(PEM)"><el-input v-model="importForm.certPem" type="textarea" :rows="7" placeholder="-----BEGIN CERTIFICATE-----"></el-input></el-form-item>
+      <el-form-item label="私钥(PEM)">
+        <el-input v-model="importForm.keyPem" type="textarea" :rows="5" placeholder="-----BEGIN PRIVATE KEY-----（可选；不导入则交付包不含私钥）"></el-input>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dlgImport=false">取消</el-button>
+      <el-button type="primary" @click="importCert()">导入</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 交付登记 -->
+  <el-dialog v-model="dlgDeliver" :title="'证书交付登记 - ' + (deliverName||'')" width="560px">
+    <el-alert type="warning" :closable="false" style="margin-bottom:12px"
+              title="线下交付流程：先「导出」交付包，经安全渠道（加密传输/当面拷贝）交给厂家；交付完成后登记台账并销毁平台侧私钥。TB 注册与设备 TLS 握手只需证书，平台无需继续持有私钥。"></el-alert>
+    <el-descriptions :column="1" border size="small" style="margin-bottom:12px">
+      <el-descriptions-item label="名称/CN">{{ deliverName }}</el-descriptions-item>
+      <el-descriptions-item label="交付包内容">cert.pem、fullchain.pem、root-ca.pem、README.txt{{ deliverHasKey ? '（含 key.pem，销毁后不再打包）' : '' }}</el-descriptions-item>
+    </el-descriptions>
+    <el-checkbox v-if="deliverHasKey" v-model="deliverForm.destroyKey">确认交付后销毁平台侧私钥 key.pem（推荐）</el-checkbox>
+    <el-alert v-else type="info" :closable="false" title="该证书无私钥（CSR 代签/已销毁/未导入），仅记录交付台账"></el-alert>
+    <template #footer>
+      <el-button @click="dlgDeliver=false">取消</el-button>
+      <el-button type="primary" plain @click="downloadBundle(deliverRow)">下载交付包(zip)</el-button>
+      <el-button type="primary" @click="confirmDeliver()">确认交付</el-button>
+    </template>
+  </el-dialog>
+
+  <!-- 证书详情 -->
+  <el-drawer v-model="dlgDetail" :title="'证书详情 - ' + (certDetail.name||'')" size="46%">
+    <el-descriptions :column="1" border size="small">
+      <el-descriptions-item label="名称">{{ certDetail.name }}</el-descriptions-item>
+      <el-descriptions-item label="CN">{{ certDetail.cn }}</el-descriptions-item>
+      <el-descriptions-item label="类型"><el-tag size="small" :type="kindTag(certDetail.kind)" effect="plain">{{ certDetail.kind }}</el-tag></el-descriptions-item>
+      <el-descriptions-item label="序列号"><span class="mono">{{ certDetail.serial }}</span></el-descriptions-item>
+      <el-descriptions-item label="有效期"><span class="mono">{{ certDetail.notBefore }} ~ {{ certDetail.notAfter }}</span></el-descriptions-item>
+      <el-descriptions-item label="签发者"><span class="mono">{{ certDetail.issuer || '-' }}</span></el-descriptions-item>
+      <el-descriptions-item v-if="certDetail.dns" label="DNS SAN"><span class="mono">{{ (certDetail.dns||[]).join(', ') }}</span></el-descriptions-item>
+      <el-descriptions-item v-if="certDetail.ips" label="IP SAN"><span class="mono">{{ (certDetail.ips||[]).join(', ') }}</span></el-descriptions-item>
+      <el-descriptions-item label="私钥">
+        <el-tag size="small" :type="certDetail.hasKey?'success':'info'" effect="plain">{{ certDetail.hasKey?'在册（不外露）':'无' }}</el-tag>
+      </el-descriptions-item>
+      <el-descriptions-item label="交付时间"><span class="mono">{{ certDetail.deliveredAt || '-' }}</span></el-descriptions-item>
+      <el-descriptions-item label="私钥销毁时间"><span class="mono">{{ certDetail.keyDestroyedAt || '-' }}</span></el-descriptions-item>
+    </el-descriptions>
+    <h4 class="title mt8">证书 PEM</h4>
+    <pre class="pre">{{ certDetail.certPem }}</pre>
+  </el-drawer>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed } = Vue;
+
+const app = createApp({
+  setup() {
+    const health = ref({});
+    const ca = ref({});
+    const msg = (t, m) => ElementPlus.ElMessage({ type: t, message: m, duration: 3000 });
+
+    async function api(method, path, body) {
+      const opt = { method, headers: { 'Content-Type': 'application/json' } };
+      if (body !== undefined) opt.body = JSON.stringify(body);
+      const r = await fetch(path, opt);
+      let data = null;
+      try { data = await r.json(); } catch { /* 下载类响应 */ }
+      if (!r.ok) throw new Error((data && data.detail) ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : r.status + ' ' + r.statusText);
+      return data;
+    }
+    const run = async (fn, okMsg) => {
+      try { const r = await fn(); if (okMsg) msg('success', okMsg); return r; }
+      catch (e) { msg('error', String(e.message || e)); }
+    };
+
+    // ---------- CA ----------
+    const loadCa = () => run(() => api('GET', '/api/ca')).then(r => { if (r) ca.value = r; });
+    const loadHealth = () => api('GET', '/api/health').then(h => { health.value = h; if (h.caInitialized && !ca.value.initialized) loadCa(); }).catch(() => health.value = { status: 'down' });
+
+    // ---------- 列表 ----------
+    const certs = ref([]);
+    const kindFilter = ref('');
+    const kindOptions = ['device', 'device(csr)', 'device(import)', 'server', 'root-ca', 'intermediate-ca'];
+    const kindTag = k => ({ device: 'success', 'device(csr)': 'success', 'device(import)': 'success', server: 'warning', 'root-ca': 'danger', 'intermediate-ca': 'primary' }[k] || 'info');
+    const filteredCerts = computed(() => kindFilter.value ? certs.value.filter(c => c.kind === kindFilter.value) : certs.value);
+    const loadCerts = () => run(() => api('GET', '/api/certs')).then(r => { if (r) certs.value = r; });
+
+    // ---------- 新增 ----------
+    const dlgIssue = ref(false);
+    const issueForm = reactive({ name: '', days: 7300 });   // 设备证书默认 20 年
+    const dlgCsr = ref(false);
+    const csrForm = reactive({ name: '', csrPem: '', days: 365 });
+    const dlgServer = ref(false);
+    const serverForm = reactive({ name: 'server', days: 7300, dns: ['localhost', 'tb'], ips: ['127.0.0.1'] });
+    const dlgImport = ref(false);
+    const importForm = reactive({ name: '', certPem: '', keyPem: '' });
+    const openAdd = cmd => {
+      if (cmd === 'device') { Object.assign(issueForm, { name: '', days: 7300 }); dlgIssue.value = true; }
+      else if (cmd === 'csr') { Object.assign(csrForm, { name: '', csrPem: '', days: 365 }); dlgCsr.value = true; }
+      else if (cmd === 'server') { Object.assign(serverForm, { name: 'server', days: 7300, dns: ['localhost', 'tb'], ips: ['127.0.0.1'] }); dlgServer.value = true; }
+      else if (cmd === 'import') { Object.assign(importForm, { name: '', certPem: '', keyPem: '' }); dlgImport.value = true; }
+    };
+    const issueDevice = () => run(() => api('POST', '/api/certs/device', { ...issueForm }), '设备证书已签发，可在列表「导出」交付包').then(r => { if (r) { dlgIssue.value = false; loadCerts(); } });
+    const signCsr = () => run(() => api('POST', '/api/certs/csr', { ...csrForm }), 'CSR 已代签，可在列表「导出」证书').then(r => { if (r) { dlgCsr.value = false; loadCerts(); } });
+    const issueServer = () => run(() => api('POST', '/api/certs/server', { ...serverForm }), '服务器证书已签发，请导出装配包并线下同步到 TB').then(r => { if (r) { dlgServer.value = false; loadCerts(); } });
+    const importCert = () => run(() => api('POST', '/api/certs/import', { ...importForm }), '证书已导入登记').then(r => { if (r) { dlgImport.value = false; loadCerts(); } });
+
+    // ---------- 查看/校验 ----------
+    const dlgDetail = ref(false);
+    const certDetail = ref({});
+    const caNames = () => ({ '根证书': 'VPP Root CA', '中间证书': 'VPP Intermediate CA 01' });
+    const openCert = n => run(() => api('GET', '/api/certs/' + encodeURIComponent(caNames()[n] || n))).then(r => { if (r) { certDetail.value = r; dlgDetail.value = true; } });
+    const verifyCert = n => run(() => api('POST', `/api/certs/${encodeURIComponent(n)}/verify`)).then(r => {
+      const ok = r && String(r.result).includes('OK') && !String(r.result).includes('FAILED');
+      msg(ok ? 'success' : 'error', '校验：' + String(r && r.result || '').trim());
+    });
+
+    // ---------- 导出 ----------
+    const downloadBlob = (blob, filename) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    };
+    const downloadPem = (url, filename) => run(async () => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('下载失败 ' + r.status);
+      downloadBlob(await r.blob(), filename);
+    }, filename + ' 已下载');
+    const downloadBundle = row => run(async () => {
+      const r = await fetch(`/api/certs/${encodeURIComponent(row.name)}/bundle`);
+      if (!r.ok) throw new Error('导出失败 ' + r.status);
+      const isServer = row.kind === 'server';
+      downloadBlob(await r.blob(), row.name + (isServer ? '-server-bundle.zip' : '-cert-bundle.zip'));
+      if (isServer) msg('info', '装配包已下载：线下同步到 TB 主机覆盖 deploy/certs/server/ 后重启 TB');
+    }, '交付包已下载，请通过安全渠道线下交付');
+
+    // ---------- 交付登记 ----------
+    const dlgDeliver = ref(false);
+    const deliverName = ref('');
+    const deliverRow = ref({});
+    const deliverForm = reactive({ destroyKey: true });
+    const deliverHasKey = ref(false);
+    const openDeliver = row => {
+      deliverName.value = row.name;
+      deliverRow.value = row;
+      deliverHasKey.value = !!row.hasKey;
+      deliverForm.destroyKey = deliverHasKey.value;
+      dlgDeliver.value = true;
+    };
+    const confirmDeliver = () => run(() => api('POST', `/api/certs/${encodeURIComponent(deliverName.value)}/deliver`, { destroyKey: deliverForm.destroyKey }), '已记录交付台账').then(r => { if (r) { dlgDeliver.value = false; loadCerts(); } });
+
+    setInterval(() => { loadHealth(); }, 5000);
+    loadHealth(); loadCa(); loadCerts();
+    return {
+      health, ca, certs, kindFilter, kindOptions, kindTag, filteredCerts,
+      loadCerts, loadCa, openAdd,
+      dlgIssue, issueForm, dlgCsr, csrForm, dlgServer, serverForm, dlgImport, importForm,
+      issueDevice, signCsr, issueServer, importCert,
+      dlgDetail, certDetail, openCert, verifyCert,
+      downloadPem, downloadBundle,
+      dlgDeliver, deliverName, deliverRow, deliverForm, deliverHasKey, openDeliver, confirmDeliver,
+      RefreshCw: ElementPlusIconsVue.Refresh, Plus: ElementPlusIconsVue.Plus,
+    };
+  }
+});
+app.use(ElementPlus, { locale: ElementPlusLocaleZhCn });
+for (const [name, comp] of Object.entries(ElementPlusIconsVue)) app.component(name, comp);
+app.mount('#app');
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -146,11 +147,12 @@ def info(cert: Path) -> dict:
     for line in out.strip().splitlines():
         k, _, v = line.partition("=")
         d[k.strip()] = v.strip()
-    # 解析 RFC2253 subject 提取 CN
+    # 解析 subject 提取 CN（兼容 OpenSSL 1.x/LibreSSL 斜杠格式 "/O=x/CN=y"
+    # 与 OpenSSL 3.x 逗号格式 "O=x, CN=y"）
     d["cn"] = ""
-    for part in d.get("subject", "").split("/"):
-        if part.startswith("CN="):
-            d["cn"] = part[3:]
+    m = re.search(r"(?:^|[/,])\s*CN=([^,/]+)", d.get("subject", ""))
+    if m:
+        d["cn"] = m.group(1).strip()
     return d
 
 

@@ -1,0 +1,306 @@
+{
+ "startedAt": 1793852433.097234,
+ "endedAt": 1793852467.073118,
+ "durationSec": 34.0,
+ "hardware": {
+  "hostname": "MacBook-Air-8.local",
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "cpuCount": 10,
+  "python": "3.12.7",
+  "tbVersion": "3.5.1"
+ },
+ "results": [
+  {
+   "id": "TC-CA-01",
+   "name": "CA 首启自动生成：健康检查与根/中间证书查看",
+   "precondition": "certadmin :19001 运行中，CA 已初始化（首启幂等生成）",
+   "steps": "1) GET /api/health；2) GET /api/ca 查看根/中间证书",
+   "expected": "caInitialized=true；root/intermediate 均在册；视图不含 files 文件路径（私钥路径不外露）",
+   "result": "PASS",
+   "detail": "root serial=FC561E5BD4BFB25E8E722A96024ADABB19C231 notAfter=Oct 30 23:31:24 2046 GMT；intermediate cn=VPP Intermediate CA 01；files 字段未外露",
+   "metrics": {
+    "rootSerial": "FC561E5BD4BFB25E8E722A96024ADABB19C231"
+   },
+   "error": "",
+   "durationSec": 0.004
+  },
+  {
+   "id": "TC-CA-02",
+   "name": "根证书/证书链导出（仅导出，无私钥下载入口）",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) GET /api/ca/root-ca.pem；2) GET /api/ca/chain.pem；3) openssl 解析两文件",
+   "expected": "根证书为 PEM 证书且不含私钥；链文件含中间+根两段证书",
+   "result": "PASS",
+   "detail": "root-ca.pem CN=VPP Root CA；chain.pem 两段（首段 VPP Intermediate CA 01），无私钥泄露",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.058
+  },
+  {
+   "id": "TC-CA-03",
+   "name": "设备证书签发：默认有效期 20 年 + 同名重签覆盖",
+   "precondition": "certadmin :19001 运行中，CA 链正常",
+   "steps": "1) POST /api/certs/device 不带 days（走默认 7300）；2) 解析 notBefore→notAfter 日差；3) 同名再签发 days=365，比对序列号与有效期",
+   "expected": "默认签发有效期 7300 天（20 年）；重签成功且序列号更新（覆盖语义）、有效期 365 天",
+   "result": "PASS",
+   "detail": "默认签发 7300 天（20 年）；重签 365 天 serial 018E69287AD3…→018E69287AD3…",
+   "metrics": {
+    "defaultDays": 7300,
+    "reissueDays": 365
+   },
+   "error": "",
+   "durationSec": 0.196
+  },
+  {
+   "id": "TC-CA-04",
+   "name": "证书查看：详情（PEM+签发者）与列表（hasKey 布尔，不泄露路径）",
+   "precondition": "certadmin :19001 运行中（用例自备在册设备证书）",
+   "steps": "1) ensure 在册证书 tc7-ca03；2) GET /api/certs/tc7-ca03 详情；3) GET /api/certs 列表",
+   "expected": "详情含 certPem 与 issuer=VPP Intermediate CA 01；列表项含 hasKey 且无 files 路径",
+   "result": "PASS",
+   "detail": "issuer=O=VPP-Lab, CN=VPP Intermediate CA 01；列表 5 项含 CA/服务器/设备，无路径泄露",
+   "metrics": {},
+   "error": "",
+   "durationSec": 1.671
+  },
+  {
+   "id": "TC-CA-05",
+   "name": "证书链校验：openssl verify 通过中间+根信任链",
+   "precondition": "certadmin :19001 运行中（用例自备在册设备证书）",
+   "steps": "1) ensure 在册证书 tc7-ca03；2) POST /api/certs/tc7-ca03/verify",
+   "expected": "校验结果含 ': OK'（证书链可信）",
+   "result": "PASS",
+   "detail": "verify=/data/secrets/devices/tc7-ca03/cert.pem: OK",
+   "metrics": {},
+   "error": "",
+   "durationSec": 1.595
+  },
+  {
+   "id": "TC-CA-06",
+   "name": "CSR 代签：私钥不出厂家环境（平台只回签证书）",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) openssl 本地生成密钥对+CSR；2) POST /api/certs/csr 代签；3) 检查 hasKey 与平台侧目录无 key.pem；4) 链校验；5) 交付包无 key.pem",
+   "expected": "签发成功 hasKey=false；平台侧无私钥文件；verify OK；bundle 不含 key.pem",
+   "result": "PASS",
+   "detail": "代签 tc7-ca06（days=365）hasKey=false，verify OK，交付包=['cert.pem', 'fullchain.pem', 'root-ca.pem', 'README.txt']",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.052
+  },
+  {
+   "id": "TC-CA-07",
+   "name": "外部证书导入登记：第三方证书+私钥入册",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) openssl 本地生成自签证书+私钥（模拟第三方 CA 签发）；2) POST /api/certs/import 带 certPem+keyPem；3) 详情回读",
+   "expected": "导入成功 hasKey=true；详情 certPem 与导入内容一致",
+   "result": "PASS",
+   "detail": "导入 tc7-ca07（第三方自签）cn=tc7-ca07，私钥入册，certPem 回读一致",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.036
+  },
+  {
+   "id": "TC-CA-08",
+   "name": "服务器证书签发：SAN 按 TB 主机定制",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) POST /api/certs/server {name=tc7-srv, dns=[localhost,thingsboard], ips=[127.0.0.1]}；2) 详情回读 dns/ips；3) openssl x509 -text 解析 SAN",
+   "expected": "kind=server；登记 dns/ips 与请求一致；证书 SAN 含 DNS:thingsboard 与 IP:127.0.0.1",
+   "result": "PASS",
+   "detail": "服务器证书 tc7-srv SAN=DNS:localhost,DNS:thingsboard,IP:127.0.0.1",
+   "metrics": {
+    "dns": [
+     "localhost",
+     "thingsboard"
+    ],
+    "ips": [
+     "127.0.0.1"
+    ]
+   },
+   "error": "",
+   "durationSec": 0.079
+  },
+  {
+   "id": "TC-CA-09",
+   "name": "导出设备交付包：cert/fullchain/key/root-ca/README",
+   "precondition": "certadmin :19001 运行中（用例自备持有私钥的在册证书）",
+   "steps": "1) ensure 在册证书 tc7-ca03；2) GET /api/certs/tc7-ca03/bundle 下载 zip；3) 断言包内清单与内容",
+   "expected": "含 cert.pem/fullchain.pem/key.pem/root-ca.pem/README.txt；cert.pem 与详情一致；fullchain 含设备+中间两段；README 含烧录指引",
+   "result": "PASS",
+   "detail": "交付包 ['README.txt', 'cert.pem', 'fullchain.pem', 'key.pem', 'root-ca.pem']；cert 与详情一致，fullchain 两段，README 含烧录/信任指引",
+   "metrics": {
+    "files": [
+     "README.txt",
+     "cert.pem",
+     "fullchain.pem",
+     "key.pem",
+     "root-ca.pem"
+    ]
+   },
+   "error": "",
+   "durationSec": 0.062
+  },
+  {
+   "id": "TC-CA-10",
+   "name": "导出服务器装配包：TB 装配布局与指引",
+   "precondition": "certadmin :19001 运行中（用例自备签发 tc7-srv）",
+   "steps": "1) 签发服务器证书 tc7-srv；2) GET /api/certs/tc7-srv/bundle 下载 zip；3) 断言装配包清单；4) 校验 README 装配指引",
+   "expected": "含 tc7-srv.pem/tc7-srv-fullchain.pem/tc7-srv_key.pem/root-ca.pem/README.txt；README 含 MQTT_SSL_PEM_CERT 装配步骤",
+   "result": "PASS",
+   "detail": "装配包 ['README.txt', 'root-ca.pem', 'tc7-srv-fullchain.pem', 'tc7-srv.pem', 'tc7-srv_key.pem']，README 含 MQTT_SSL_PEM_CERT 指引",
+   "metrics": {
+    "files": [
+     "README.txt",
+     "root-ca.pem",
+     "tc7-srv-fullchain.pem",
+     "tc7-srv.pem",
+     "tc7-srv_key.pem"
+    ]
+   },
+   "error": "",
+   "durationSec": 0.061
+  },
+  {
+   "id": "TC-CA-11",
+   "name": "交付台账登记与私钥销毁：销毁后 hasKey=false、包内无私钥",
+   "precondition": "certadmin :19001 运行中（用例自备签发 tc7-ca11）",
+   "steps": "1) 签发 tc7-ca11；2) POST /api/certs/tc7-ca11/deliver {destroyKey:true}；3) 查详情 hasKey/keyDestroyedAt；4) 平台侧 key.pem 文件核实；5) 重新下载 bundle 断言无 key.pem",
+   "expected": "keyDestroyed=true；deliveredAt/keyDestroyedAt 登记；key.pem 物理删除；销毁后交付包无私钥且 README 说明已销毁",
+   "result": "PASS",
+   "detail": "deliveredAt=2026-11-05T12:20:38+0800，key.pem 已物理删除，销毁后交付包=['cert.pem', 'fullchain.pem', 'root-ca.pem', 'README.txt']",
+   "metrics": {
+    "deliveredAt": "2026-11-05T12:20:38+0800",
+    "keyDestroyed": true
+   },
+   "error": "",
+   "durationSec": 0.074
+  },
+  {
+   "id": "TC-CA-12",
+   "name": "参数校验负例：非法名称/非法 PEM 全部 400",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) POST /api/certs/device name 含 /；2) POST /api/certs/csr name 含 /；3) POST /api/certs/import certPem 为垃圾文本",
+   "expected": "三个请求均返回 400，且不产生登记记录",
+   "result": "PASS",
+   "detail": "device/csr 非法名称与非法 PEM 导入均 400，登记簿无残留（4 项）",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.008
+  },
+  {
+   "id": "TC-CA-13",
+   "name": "资源不存在负例：详情/校验/导出/交付均 404",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) GET /api/certs/tc7-nope；2) POST 同名 /verify；3) GET 同名 /bundle；4) POST 同名 /deliver",
+   "expected": "四个请求均返回 404",
+   "result": "PASS",
+   "detail": "detail/verify/bundle/deliver 四类不存在资源均 404",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.009
+  },
+  {
+   "id": "TC-CA-14",
+   "name": "无效 CSR 拒绝：签发失败且不留半成品登记",
+   "precondition": "certadmin :19001 运行中",
+   "steps": "1) POST /api/certs/csr csrPem 为垃圾文本；2) 查列表确认无该名称登记",
+   "expected": "返回 ≥400 错误；登记簿无该名称（无半成品证书残留）",
+   "result": "PASS",
+   "detail": "无效 CSR 返回 400，登记簿与产物目录均无残留",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.007
+  },
+  {
+   "id": "TC-SIM-01",
+   "name": "旧证书签发端点下线：POST /api/certs/device|csr 均拒绝",
+   "precondition": "模拟器 :19000 运行中（v1.3）",
+   "steps": "1) POST /api/certs/device（v1.2 签发入口）；2) POST /api/certs/csr（v1.2 代签入口）",
+   "expected": "两个旧签发端点均 405 Method Not Allowed（路径仍在但仅 GET/DELETE 语义）",
+   "result": "PASS",
+   "detail": "POST /api/certs/device→405，POST /api/certs/csr→405；签发已移交 certadmin",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.008
+  },
+  {
+   "id": "TC-SIM-02",
+   "name": "未导入证书注册拒绝：register 返回 400 且不建 TB 档",
+   "precondition": "模拟器与 TB 运行中",
+   "steps": "1) 创建设备（不连接）；2) 直接 POST /api/devices/{name}/register；3) 查 TB 设备",
+   "expected": "注册被拒（400，提示先导入证书）；TB 无同名设备",
+   "result": "PASS",
+   "detail": "register→400（设备证书未导入：请先在「证书导入」页导入证书管理工具导出的 cert.pem/k…），TB 无建档",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.11
+  },
+  {
+   "id": "TC-SIM-03",
+   "name": "证书导入：非法 PEM 拒绝、合法导入回读、删除后 404",
+   "precondition": "模拟器与 certadmin 运行中（导入素材取自 certadmin 交付包）",
+   "steps": "1) POST /api/certs/import 垃圾 PEM（应 400）；2) certadmin 签发 tc7-sim03 并取 cert/key/root-ca；3) 合法导入；4) GET 列表与详情回读；5) GET /api/certs/ca 信任根状态；6) DELETE 后再 GET",
+   "expected": "非法 PEM 400；导入 keyImported=true 且 cn 正确；回读一致；信任根 CN=VPP Root CA；删除成功且详情 404",
+   "result": "PASS",
+   "detail": "非法 PEM→400；导入 cn=tc7-sim03 keyImported/caImported=true；回读一致；信任根 VPP Root CA；删除后 404",
+   "metrics": {},
+   "error": "",
+   "durationSec": 0.264
+  },
+  {
+   "id": "TC-SIM-04",
+   "name": "创建设备不再自动注册：v1.2 载荷兼容但不触发签发/注册",
+   "precondition": "模拟器与 TB 运行中",
+   "steps": "1) POST /api/devices 携带 v1.2 风格 autoRegister=true 载荷（autoConnect=false）；2) 等待 3s；3) 查 TB 设备与模拟器设备状态",
+   "expected": "创建成功（多余字段被忽略）；无自动 TB 注册；设备未连接",
+   "result": "PASS",
+   "detail": "autoRegister 载荷被忽略（Pydantic 默认行为）；TB 无建档、设备未连接；注册须显式 POST /register（依赖已导入证书）",
+   "metrics": {},
+   "error": "",
+   "durationSec": 3.025
+  },
+  {
+   "id": "TC-FLOW-01",
+   "name": "TB 服务器证书就绪：TLS 证书由 certadmin CA 签发且与登记一致",
+   "precondition": "TB mqtts :18885 已装配 certadmin 导出的服务器证书（docs/03 §4.2）",
+   "steps": "1) 真实 TLS 握手 localhost:18885 取服务器证书；2) 解析签发者与序列号；3) 与 certadmin 登记簿 server 记录比对；4) POST /api/certs/server/verify 校验链",
+   "expected": "握手成功（TLS 1.2+）；签发者=VPP Intermediate CA 01；序列号与登记一致；verify OK",
+   "result": "PASS",
+   "detail": "TLS TLSv1.3；issuer=O=VPP-Lab, CN=VPP Intermediate CA 01；serial 与登记一致（018E69287AD33E3E…）；verify OK",
+   "metrics": {
+    "tlsVersion": "TLSv1.3"
+   },
+   "error": "",
+   "durationSec": 0.211
+  },
+  {
+   "id": "TC-FLOW-02",
+   "name": "设备证书线下同步闭环：签发→导出→导入→注册→TLS 上线→遥测→凭据绑定",
+   "precondition": "certadmin/模拟器/TB 运行中；TB 信任 certadmin 根证书（TC-FLOW-01 环境）",
+   "steps": "1) certadmin 签发 tc7-flow02 并链校验；2) 读交付包内容（cert/key/root-ca）；3) 模拟器导入；4) 创建设备并注册；5) 连接等 TB active；6) 读 TB X.509 凭据并与签发证书 DER 逐字节比对；7) 等 TB 首轮遥测 p 入库",
+   "expected": "注册 tb-registered；TB active；凭据类型 X509_CERTIFICATE 且值与签发证书一致；遥测 p 有值",
+   "result": "PASS",
+   "detail": "签发→交付包导入→注册 tb-registered→active；凭据 base64(DER) 与签发证书一致；遥测 p=0.12 kW",
+   "metrics": {
+    "p": 0.12,
+    "days": 7300
+   },
+   "error": "",
+   "durationSec": 6.522
+  },
+  {
+   "id": "TC-FLOW-03",
+   "name": "交付销钥后设备持续在线：仅凭存量证书运行",
+   "precondition": "certadmin/模拟器/TB 运行中（用例自备 tc7-flow03 全链接入）",
+   "steps": "1) 完整接入流水线建立 tc7-flow03 在线并记录遥测基线；2) POST /api/certs/tc7-flow03/deliver {destroyKey:true}；3) 重新下载 bundle 断言无私钥；4) 等待下一轮遥测入库且 TB active",
+   "expected": "keyDestroyed=true 且交付包无 key.pem；设备不重连仍持续上报遥测、保持在线",
+   "result": "PASS",
+   "detail": "keyDestroyed=true，销毁后交付包=['cert.pem', 'fullchain.pem', 'root-ca.pem', 'README.txt']；销钥后新遥测 ts=1793852460000（>基线 1793852400000）且 TB active——设备凭存量证书持续运行",
+   "metrics": {
+    "newTelemetryTs": 1793852460000
+   },
+   "error": "",
+   "durationSec": 16.473
+  }
+ ]
+}

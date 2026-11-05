@@ -3,7 +3,10 @@
 __pycache__/
 *.pyc
 certmgr/secrets/
+certadmin/data/
+simulator/data/
 deploy/certs/
 deploy/.env
 test-output/
 *.log
+tests/p7_v13/_tmp/

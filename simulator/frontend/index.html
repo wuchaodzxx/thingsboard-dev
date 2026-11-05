@@ -38,7 +38,7 @@
       <el-tabs v-model="tab" style="background:#fff;">
         <el-tab-pane label="设备管理" name="devices"></el-tab-pane>
         <el-tab-pane label="异常注入" name="faults"></el-tab-pane>
-        <el-tab-pane label="证书管理" name="certs"></el-tab-pane>
+        <el-tab-pane label="证书导入" name="certs"></el-tab-pane>
         <el-tab-pane label="报文日志" name="logs"></el-tab-pane>
       </el-tabs>
 
@@ -138,27 +138,20 @@
         <div class="sub mt8">disconnect / delay 按时长生效；其余按次数生效（消耗完自动解除）。rejectCmd/failCmd 影响下发的 RPC 指令（M13 REJECTED / FAILED）。</div>
       </div>
 
-      <!-- ============ 证书管理 ============ -->
+      <!-- ============ 证书导入 ============ -->
       <div class="page" v-show="tab==='certs'">
         <div class="toolbar">
           <el-button :icon="RefreshCw" @click="loadCerts()">刷新</el-button>
-          <el-button type="primary" plain :icon="Plus" @click="dlgIssue=true; issueForm={name:'',days:365}">签发设备证书</el-button>
-          <el-button type="primary" plain @click="dlgCsr=true; csrForm={name:'',csrPem:'',days:365}">签发外部 CSR</el-button>
-          <el-button type="primary" plain @click="dlgImport=true; importForm={name:'',certPem:'',keyPem:''}">导入证书</el-button>
-          <span style="display:flex;align-items:center;gap:6px;">
-            到期预警(天) <el-input-number v-model="expiryDays" :min="1" :max="3650" size="small" style="width:120px"></el-input-number>
-            <el-button size="small" @click="checkExpiry">检查</el-button>
-          </span>
+          <el-button type="primary" :icon="Plus" @click="openImport()">导入证书</el-button>
+          <span class="spacer"></span>
+          <span class="sub">平台根证书：</span>
+          <el-tag v-if="caStatus.present" size="small" type="success" effect="plain">已信任 · {{ caStatus.cn }}</el-tag>
+          <el-tag v-else size="small" type="danger" effect="plain">未导入（mqtts 连接将失败）</el-tag>
         </div>
-        <el-alert v-if="expiring.length" type="warning" :closable="false" style="margin-bottom:12px"
-                  :title="'以下证书将在 ' + expiryDays + ' 天内到期：' + expiring.map(c=>c.name).join(', ')"></el-alert>
         <el-table :data="certs" border size="small">
           <el-table-column prop="name" label="名称" min-width="120"></el-table-column>
           <el-table-column prop="cn" label="CN" min-width="120"></el-table-column>
-          <el-table-column label="类型" width="90">
-            <template #default="{row}"><el-tag size="small" :type="row.kind==='device'?'success':'info'">{{ row.kind }}</el-tag></template>
-          </el-table-column>
-          <el-table-column prop="serial" label="序列号" width="120">
+          <el-table-column prop="serial" label="序列号" width="130">
             <template #default="{row}"><span class="mono">{{ (row.serial||'').slice(-12) }}</span></template>
           </el-table-column>
           <el-table-column prop="notBefore" label="生效" width="160">
@@ -167,24 +160,22 @@
           <el-table-column prop="notAfter" label="到期" width="160">
             <template #default="{row}"><span class="mono">{{ row.notAfter }}</span></template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column label="私钥" width="90" align="center">
             <template #default="{row}">
-              <el-tag v-if="row.revokedAt" size="small" type="danger">已撤销</el-tag>
-              <el-tag v-else size="small" type="success" effect="plain">有效</el-tag>
+              <el-tag v-if="row.hasKey" size="small" type="success" effect="plain">已导入</el-tag>
+              <el-tag v-else size="small" type="danger" effect="plain">缺失</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="280" fixed="right">
+          <el-table-column label="操作" width="160" fixed="right">
             <template #default="{row}">
               <el-button size="small" @click="openCert(row.name)">详情</el-button>
-              <el-button size="small" @click="verifyCert(row.name)">校验链</el-button>
-              <el-button size="small" type="primary" plain @click="tbRegister(row.name)">TB 注册</el-button>
-              <el-popconfirm title="撤销证书并重置 TB 凭据？" @confirm="revokeCert(row.name)">
-                <template #reference><el-button size="small" type="danger" plain>撤销</el-button></template>
+              <el-popconfirm title="删除已导入的证书文件？" @confirm="delCert(row.name)">
+                <template #reference><el-button size="small" type="danger" plain>删除</el-button></template>
               </el-popconfirm>
             </template>
           </el-table-column>
         </el-table>
-        <div class="sub mt8">CA 私钥不经 API 暴露；撤销后 TB CE 3.5.1 不消费 CRL，平台侧通过重置设备凭据使其失效。手动流程：新建设备关闭「自动注册」→ 签发/导入证书 → 设备行「注册」。</div>
+        <div class="sub mt8">模拟器不签发证书：请在独立「证书管理工具」（19001）签发并导出交付包，将其中 cert.pem / key.pem 粘贴导入；首次使用还需导入 root-ca.pem 作为平台信任根（完整流程见 docs/03）。导入后到设备管理页「注册」并「连接」。</div>
       </div>
 
       <!-- ============ 报文日志 ============ -->
@@ -266,12 +257,10 @@
         </el-select>
       </el-form-item>
       <el-form-item label="容量(kW)"><el-input-number v-model="createForm.capKw" :min="1" :max="10000"></el-input-number></el-form-item>
-      <el-form-item label="自动注册">
-        <el-switch v-model="createForm.autoRegister"></el-switch>
-        <span v-if="createForm.autoRegister" class="sub ml8">自动签发证书并注册到 ThingsBoard（X.509）</span>
-        <span v-else class="sub ml8">创建后请手动签发/导入证书，再点设备行「注册」</span>
+      <el-form-item label="自动连接">
+        <el-switch v-model="createForm.autoConnect"></el-switch>
+        <span class="sub ml8">证书未导入时连接将自动重试；请先在「证书导入」页导入证书并点设备行「注册」</span>
       </el-form-item>
-      <el-form-item label="自动连接"><el-switch v-model="createForm.autoConnect"></el-switch></el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="dlgCreate=false">取消</el-button>
@@ -339,40 +328,18 @@
     </el-table>
   </el-drawer>
 
-  <!-- 签发设备证书 -->
-  <el-dialog v-model="dlgIssue" title="签发设备证书" width="420px">
-    <el-form label-width="90px">
-      <el-form-item label="名称"><el-input v-model="issueForm.name" placeholder="设备名/CN"></el-input></el-form-item>
-      <el-form-item label="有效天数"><el-input-number v-model="issueForm.days" :min="1" :max="3650"></el-input-number></el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="dlgIssue=false">取消</el-button>
-      <el-button type="primary" @click="issueCert()">签发</el-button>
-    </template>
-  </el-dialog>
-
-  <!-- 签发外部 CSR -->
-  <el-dialog v-model="dlgCsr" title="签发外部 CSR（私钥不出厂家环境）" width="560px">
-    <el-form label-width="90px">
-      <el-form-item label="名称"><el-input v-model="csrForm.name"></el-input></el-form-item>
-      <el-form-item label="有效天数"><el-input-number v-model="csrForm.days" :min="1" :max="3650"></el-input-number></el-form-item>
-      <el-form-item label="CSR(PEM)"><el-input v-model="csrForm.csrPem" type="textarea" :rows="7" placeholder="-----BEGIN CERTIFICATE REQUEST-----"></el-input></el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="dlgCsr=false">取消</el-button>
-      <el-button type="primary" @click="signCsr()">签发</el-button>
-    </template>
-  </el-dialog>
-
-  <!-- 导入已有证书（手动配置证书） -->
-  <el-dialog v-model="dlgImport" title="导入证书（手动配置）" width="620px">
+  <!-- 导入证书（证书工具线下同步） -->
+  <el-dialog v-model="dlgImport" title="导入证书（线下同步自证书管理工具）" width="640px">
     <el-alert type="info" :closable="false" style="margin-bottom:12px"
-              title="适用于证书由第三方/厂家侧预先持有的场景：导入后点设备行「注册」完成 TB 建档。模拟器本机连接 TLS 需同时导入私钥。"></el-alert>
-    <el-form label-width="90px">
+              title="在独立证书管理工具签发并导出交付包后，将其中 PEM 内容粘贴到此处。首次使用请同时导入 root-ca.pem（平台信任根）。"></el-alert>
+    <el-form label-width="120px">
       <el-form-item label="设备名"><el-input v-model="importForm.name" placeholder="须与证书 CN 一致"></el-input></el-form-item>
-      <el-form-item label="证书(PEM)"><el-input v-model="importForm.certPem" type="textarea" :rows="7" placeholder="-----BEGIN CERTIFICATE-----"></el-input></el-form-item>
+      <el-form-item label="证书(PEM)"><el-input v-model="importForm.certPem" type="textarea" :rows="7" placeholder="-----BEGIN CERTIFICATE-----（交付包 cert.pem 或 fullchain.pem）"></el-input></el-form-item>
       <el-form-item label="私钥(PEM)">
-        <el-input v-model="importForm.keyPem" type="textarea" :rows="5" placeholder="-----BEGIN PRIVATE KEY-----（可选：模拟器本机连接需要；厂家持有则留空）"></el-input>
+        <el-input v-model="importForm.keyPem" type="textarea" :rows="5" placeholder="-----BEGIN PRIVATE KEY-----（交付包 key.pem；模拟器本机连接 TLS 必需）"></el-input>
+      </el-form-item>
+      <el-form-item label="根证书(PEM)">
+        <el-input v-model="importForm.caPem" type="textarea" :rows="4" placeholder="-----BEGIN CERTIFICATE-----（交付包 root-ca.pem；首次导入一次即可）"></el-input>
       </el-form-item>
     </el-form>
     <template #footer>
@@ -385,10 +352,11 @@
   <el-drawer v-model="dlgCert" :title="'证书详情 - ' + (certDetail.name||'')" size="46%">
     <el-descriptions :column="1" border size="small">
       <el-descriptions-item label="CN">{{ certDetail.cn }}</el-descriptions-item>
-      <el-descriptions-item label="类型">{{ certDetail.kind }}</el-descriptions-item>
       <el-descriptions-item label="序列号"><span class="mono">{{ certDetail.serial }}</span></el-descriptions-item>
       <el-descriptions-item label="有效期"><span class="mono">{{ certDetail.notBefore }} ~ {{ certDetail.notAfter }}</span></el-descriptions-item>
-      <el-descriptions-item label="撤销时间"><span class="mono">{{ certDetail.revokedAt || '-' }}</span></el-descriptions-item>
+      <el-descriptions-item label="私钥">
+        <el-tag size="small" :type="certDetail.hasKey?'success':'danger'" effect="plain">{{ certDetail.hasKey?'已导入':'缺失（TLS 连接将失败）' }}</el-tag>
+      </el-descriptions-item>
     </el-descriptions>
     <h4 class="title mt8">证书 PEM</h4>
     <pre class="pre">{{ certDetail.certPem }}</pre>
@@ -444,8 +412,8 @@ const app = createApp({
       { v: 5, label: '5 工业电机' }, { v: 6, label: '6 数据中心' },
       { v: 7, label: '7 水泵类' }, { v: 20, label: '20 其他（厂家自定义）' },
     ];
-    const createForm = reactive({ name: '', devType: 'pv', loadType: 1, capKw: 100, autoRegister: true, autoConnect: true });
-    const openCreate = () => { Object.assign(createForm, { name: '', devType: 'pv', loadType: 1, capKw: 100, autoRegister: true, autoConnect: true }); dlgCreate.value = true; };
+    const createForm = reactive({ name: '', devType: 'pv', loadType: 1, capKw: 100, autoConnect: true });
+    const openCreate = () => { Object.assign(createForm, { name: '', devType: 'pv', loadType: 1, capKw: 100, autoConnect: true }); dlgCreate.value = true; };
     const createDevice = () => run(() => api('POST', '/api/devices', { ...createForm }), '设备已创建').then(r => { if (r) { dlgCreate.value = false; loadDevices(); } });
     const registerDev = n => run(() => api('POST', `/api/devices/${n}/register`), '已注册到 ThingsBoard（X.509 凭据，devType 取设备配置）');
 
@@ -512,27 +480,19 @@ const app = createApp({
       run(() => api('POST', `/api/devices/${fDevice.value}/inject`, body), '已注入 ' + m.title).then(loadDevices);
     };
 
-    // ---------- 证书 ----------
+    // ---------- 证书导入 ----------
     const certs = ref([]);
-    const expiring = ref([]);
-    const expiryDays = ref(30);
-    const dlgIssue = ref(false);
-    const issueForm = reactive({ name: '', days: 365 });
-    const dlgCsr = ref(false);
-    const csrForm = reactive({ name: '', csrPem: '', days: 365 });
+    const caStatus = ref({ present: false });
     const dlgImport = ref(false);
-    const importForm = reactive({ name: '', certPem: '', keyPem: '' });
+    const importForm = reactive({ name: '', certPem: '', keyPem: '', caPem: '' });
     const dlgCert = ref(false);
     const certDetail = ref({});
     const loadCerts = () => run(() => api('GET', '/api/certs')).then(r => { if (r) certs.value = r; });
-    const checkExpiry = () => run(() => api('GET', `/api/certs/expiry?days=${expiryDays.value}`)).then(r => { expiring.value = r || []; if (r && !r.length) msg('success', `${expiryDays.value} 天内无到期证书`); });
-    const issueCert = () => run(() => api('POST', '/api/certs/device', { ...issueForm }), '证书已签发').then(r => { if (r) { dlgIssue.value = false; loadCerts(); } });
-    const signCsr = () => run(() => api('POST', '/api/certs/csr', { ...csrForm }), 'CSR 已签发').then(r => { if (r) { dlgCsr.value = false; loadCerts(); } });
-    const importCert = () => run(() => api('POST', '/api/certs/import', { ...importForm }), '证书已导入（手动配置完成，可点设备行「注册」）').then(r => { if (r) { dlgImport.value = false; loadCerts(); } });
+    const loadCaStatus = () => api('GET', '/api/certs/ca').then(r => caStatus.value = r).catch(() => {});
+    const openImport = () => { Object.assign(importForm, { name: '', certPem: '', keyPem: '', caPem: '' }); dlgImport.value = true; };
+    const importCert = () => run(() => api('POST', '/api/certs/import', { ...importForm }), '证书已导入，可在设备管理页「注册」并「连接」').then(r => { if (r) { dlgImport.value = false; loadCerts(); loadCaStatus(); } });
     const openCert = n => run(() => api('GET', '/api/certs/' + n)).then(r => { if (r) { certDetail.value = r; dlgCert.value = true; } });
-    const verifyCert = n => run(() => api('POST', `/api/certs/${n}/verify`)).then(r => { const ok = r && String(r.result).includes('OK') && !String(r.result).includes('FAILED'); msg(ok ? 'success' : 'error', '校验：' + String(r && r.result || '').trim()); });
-    const tbRegister = n => run(() => api('POST', `/api/certs/${n}/tb-register`, { type: 'default' }), '已注册到 ThingsBoard（X.509 凭据）');
-    const revokeCert = n => run(() => api('POST', `/api/certs/${n}/revoke`, { reason: 'unspecified', tbRevoke: true }), '已撤销并重置 TB 凭据').then(loadCerts);
+    const delCert = n => run(() => api('DELETE', '/api/certs/' + n), '已删除').then(() => { loadCerts(); });
 
     // ---------- 日志 ----------
     const logs = ref([]);
@@ -556,7 +516,7 @@ const app = createApp({
     const loadHealth = () => api('GET', '/api/health').then(h => health.value = h).catch(() => health.value = { status: 'down' });
     watch(tab, t => {
       if (t === 'devices') loadDevices();
-      else if (t === 'certs') { loadCerts(); }
+      else if (t === 'certs') { loadCerts(); loadCaStatus(); }
       else if (t === 'logs') loadLogs();
     });
     setInterval(() => {
@@ -573,8 +533,8 @@ const app = createApp({
       dlgCurve, curveForm, openCurve, saveCurve,
       dlgLedger, ledgerName, ledger, openLedger, loadLedger,
       fDevice, curDev, faultModes, inject,
-      certs, expiring, expiryDays, dlgIssue, issueForm, dlgCsr, csrForm, dlgImport, importForm, dlgCert, certDetail,
-      loadCerts, checkExpiry, issueCert, signCsr, importCert, openCert, verifyCert, tbRegister, revokeCert,
+      certs, caStatus, dlgImport, importForm, dlgCert, certDetail,
+      loadCerts, loadCaStatus, openImport, importCert, openCert, delCert,
       logs, autoLogs, logExpandKeys, onLogExpand, msgTypes, logFilter, loadLogs, exportLogs,
       RefreshCw: ElementPlusIconsVue.Refresh, Plus: ElementPlusIconsVue.Plus, Search: ElementPlusIconsVue.Search,
     };

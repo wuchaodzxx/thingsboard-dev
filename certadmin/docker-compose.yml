@@ -1,0 +1,34 @@
+# =====================================================================
+# 证书管理工具（certadmin）独立编排 — 与 ThingsBoard / 设备模拟器解耦，
+# 可在独立主机运行（拷贝仓库后 `docker compose -f certadmin/docker-compose.yml up -d --build`）。
+# 端口规划（对外统一 1xxxx）：
+#   19001 -> 9001   Web UI / REST
+# 证书数据持久化：certadmin/data/secrets（根CA私钥、签发登记簿、设备证书）。
+#   首次启动自动生成 根CA+中间CA（默认已生成，仅查看/导出，无生成入口）。
+#   该目录即 CA 根信任源，务必备份；丢失 = 全部已签发证书作废。
+# 线下同步物：root-ca.pem（给 TB/设备信任）、server 装配包（给 TB）、
+#             设备交付包（给厂家/模拟器），均经 UI 导出，工具本身不联网对接 TB。
+# =====================================================================
+
+name: vpp-certadmin
+
+services:
+  certadmin:
+    build:
+      context: ..
+      dockerfile: certadmin/Dockerfile
+    image: ${CERTADMIN_IMAGE:-vpp-certadmin:1.0.0}
+    container_name: vpp-certadmin
+    restart: unless-stopped
+    ports:
+      - "${CERTADMIN_HTTP_PORT:-19001}:9001"
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      CERTADMIN_SECRETS: /data/secrets
+    volumes:
+      - ./data:/data/secrets
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

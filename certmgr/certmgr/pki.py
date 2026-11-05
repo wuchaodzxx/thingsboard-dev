@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -140,7 +141,16 @@ class PKI:
 
     def sign_external_csr(self, csr: Path, name: str, days: int = 7300,
                           out_dir: Path | None = None) -> dict:
-        """厂家自带密钥对与 CSR：只签发证书，私钥不出厂家环境。"""
+        """厂家自带密钥对与 CSR：只签发证书，私钥不出厂家环境。
+
+        先校验 CSR 可解析（openssl req -noout），无效 CSR 直接拒绝，
+        避免先建产物目录再签发失败留下半成品目录。
+        """
+        r = subprocess.run(["openssl", "req", "-in", str(csr), "-noout"],
+                           capture_output=True)
+        if r.returncode != 0:
+            raise ValueError("CSR 解析失败: "
+                             + r.stderr.decode(errors="replace").strip()[:200])
         ca = self.ca_paths()
         d = Path(out_dir) if out_dir else self.dev_dir / name
         d.mkdir(parents=True, exist_ok=True)
@@ -183,6 +193,29 @@ class PKI:
         return {"name": name, "cn": info.get("cn", ""), "serial": info.get("serial", ""),
                 "notAfter": info.get("notAfter", ""), "dir": str(d),
                 "keyImported": key_imported}
+
+    # ---------- 线下交付 ----------
+    def mark_delivered(self, name: str, destroy_key: bool = False) -> dict:
+        """线下交付台账：记录交付时间；可选销毁平台侧私钥（交付完成后推荐）。
+
+        TB X.509 凭据注册与设备 TLS 握手只需证书，私钥交付后平台侧无需继续持有。
+        CSR 签发（sourceCsr）路径本无私钥，destroy_key 不生效，仅记录交付时间。
+        """
+        reg = self._registry()
+        if name not in reg["issued"]:
+            raise KeyError(f"登记簿中不存在：{name}")
+        rec = reg["issued"][name]
+        now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        rec["deliveredAt"] = now
+        key_removed = False
+        key_file = (rec.get("files") or {}).get("key")
+        if destroy_key and key_file and Path(key_file).exists():
+            Path(key_file).unlink()
+            rec["files"].pop("key", None)
+            rec["keyDestroyedAt"] = now
+            key_removed = True
+        self._save_registry(reg)
+        return {"name": name, "deliveredAt": now, "keyDestroyed": key_removed}
 
     # ---------- 校验/查询/吊销 ----------
     def verify_device(self, name: str) -> str:
